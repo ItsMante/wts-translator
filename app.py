@@ -5,7 +5,6 @@ import threading
 import json
 import os
 import sys
-import ollama
 from translator import translate_wts
 
 def resource_path(relative):
@@ -22,6 +21,33 @@ try:
     _DND_AVAILABLE = True
 except ImportError:
     _DND_AVAILABLE = False
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PROVIDER CONFIG
+# ══════════════════════════════════════════════════════════════════════════════
+PROVIDERS = {
+    "ollama":    {"label": "Ollama (local)",  "needs_key": False, "models": ["gemma2", "llama3", "mistral", "phi3"]},
+    "anthropic": {"label": "Anthropic",       "needs_key": True,  "models": ["claude-haiku-4-5", "claude-sonnet-4-5"]},
+    "openai":    {"label": "OpenAI",          "needs_key": True,  "models": ["gpt-4o-mini", "gpt-4o"]},
+    "gemini":    {"label": "Gemini",          "needs_key": True,  "models": ["gemini-1.5-flash", "gemini-1.5-pro"]},
+    "deepseek":  {"label": "DeepSeek",        "needs_key": True,  "models": ["deepseek-chat", "deepseek-reasoner"]},
+}
+PROVIDER_LABELS = [v["label"] for v in PROVIDERS.values()]
+PROVIDER_KEYS   = list(PROVIDERS.keys())
+
+def get_config_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+def load_config():
+    try:
+        with open(get_config_path(), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_config(data):
+    with open(get_config_path(), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  INTERNATIONALISATION  (ES / EN)
@@ -99,6 +125,30 @@ STRINGS = {
         "log_dest":             "Destino: {path}",
         "log_dnd_unavailable":  "ℹ  Drag & drop no disponible (instala tkinterdnd2 para habilitarlo).",
         "log_dnd_error":        "⚠  Drag & drop: error al registrar ({err})",
+
+        # Config tab
+        "tab_config":           "Configuración",
+        "cfg_provider":         "Proveedor de IA",
+        "cfg_provider_lbl":     "Proveedor:",
+        "cfg_model_lbl":        "Modelo:",
+        "cfg_apikey_lbl":       "API Key:",
+        "cfg_apikey_ph":        "Ingresá tu API Key...",
+        "cfg_apikey_show":      "👁",
+        "cfg_test_btn":         "🔌  Probar conexión",
+        "cfg_test_ok":          "✓ Conexión exitosa — modelo: {model}",
+        "cfg_test_fail":        "✗ Error: {err}",
+        "cfg_test_running":     "Probando...",
+        "cfg_save_btn":         "💾  Guardar configuración",
+        "cfg_saved":            "Configuración guardada.",
+        "cfg_language":         "Idioma de la interfaz",
+        "cfg_theme":            "Tema",
+        "cfg_theme_dark":       "Oscuro",
+        "cfg_theme_light":      "Claro",
+        "cfg_theme_system":     "Sistema",
+        "cfg_about":            "Acerca de",
+        "cfg_about_text":       "WTS Translator v1.0.0\nDesarrollado por Mateo Neufeld (SoyMante)\nAsistencia: Claude (Anthropic)\ngithub.com/ItsMante/wts-translator",
+        "cfg_ollama_note":      "ℹ  Ollama no requiere API Key — corre localmente en tu PC.",
+        "cfg_key_needed":       "⚠  Este proveedor requiere una API Key para funcionar.",
     },
 
     "en": {
@@ -173,6 +223,30 @@ STRINGS = {
         "log_dest":             "Destination: {path}",
         "log_dnd_unavailable":  "ℹ  Drag & drop unavailable (install tkinterdnd2 to enable it).",
         "log_dnd_error":        "⚠  Drag & drop: registration error ({err})",
+
+        # Config tab
+        "tab_config":           "Settings",
+        "cfg_provider":         "AI Provider",
+        "cfg_provider_lbl":     "Provider:",
+        "cfg_model_lbl":        "Model:",
+        "cfg_apikey_lbl":       "API Key:",
+        "cfg_apikey_ph":        "Enter your API Key...",
+        "cfg_apikey_show":      "👁",
+        "cfg_test_btn":         "🔌  Test connection",
+        "cfg_test_ok":          "✓ Connection successful — model: {model}",
+        "cfg_test_fail":        "✗ Error: {err}",
+        "cfg_test_running":     "Testing...",
+        "cfg_save_btn":         "💾  Save settings",
+        "cfg_saved":            "Settings saved.",
+        "cfg_language":         "Interface language",
+        "cfg_theme":            "Theme",
+        "cfg_theme_dark":       "Dark",
+        "cfg_theme_light":      "Light",
+        "cfg_theme_system":     "System",
+        "cfg_about":            "About",
+        "cfg_about_text":       "WTS Translator v1.0.0\nDeveloped by Mateo Neufeld (SoyMante)\nAssistance: Claude (Anthropic)\ngithub.com/ItsMante/wts-translator",
+        "cfg_ollama_note":      "ℹ  Ollama requires no API Key — it runs locally on your PC.",
+        "cfg_key_needed":       "⚠  This provider requires an API Key to work.",
     },
 }
 
@@ -242,9 +316,20 @@ class WTSTranslatorApp(ctk.CTk):
         self._perf_key   = "normal"   # internal key, independent of display language
         self.is_running  = False
 
-        self.available_models = get_ollama_models()
+        # Load saved config
+        cfg = load_config()
+        self._provider   = cfg.get("provider", "ollama")  # internal provider key
+        self._api_key    = cfg.get("api_key", "")
+        self._lang       = cfg.get("lang", self._lang)
+
+        self.available_models = (
+            get_ollama_models() if self._provider == "ollama"
+            else PROVIDERS[self._provider]["models"]
+        )
+        saved_model = cfg.get("model", "")
         self.model_var = tk.StringVar(
-            value=self.available_models[0] if self.available_models else "gemma2"
+            value=saved_model if saved_model else
+            (self.available_models[0] if self.available_models else "gemma2")
         )
 
         self._build_ui()
@@ -259,18 +344,11 @@ class WTSTranslatorApp(ctk.CTk):
     # ══════════════════════════════════════════════════════════════════════════
     #  LANGUAGE TOGGLE
     # ══════════════════════════════════════════════════════════════════════════
-    def _toggle_language(self):
-        self._lang = "en" if self._lang == "es" else "es"
-        self._apply_language()
-
     def _apply_language(self):
         s = self._
 
         # Window title
         self.title(s("title"))
-
-        # Language button shows the OTHER language as the switch target
-        self.lang_btn.configure(text="🌐 EN" if self._lang == "es" else "🌐 ES")
 
         # ── Main tabs: CTkTabview has no rename() — rebuild them ───────────
         # Save which tab is active (translate vs glossary) to restore it
@@ -329,7 +407,7 @@ class WTSTranslatorApp(ctk.CTk):
             # seg._buttons_dict maps current label text -> CTkButton
             old_keys = list(seg._buttons_dict.keys())
             # We always add tabs in order: translate first, glossary second
-            new_labels = [s("tab_translate"), s("tab_glossary")]
+            new_labels = [s("tab_translate"), s("tab_glossary"), s("tab_config")]
             for old_key, new_label in zip(old_keys, new_labels):
                 if old_key != new_label:
                     btn = seg._buttons_dict.pop(old_key)
@@ -377,42 +455,29 @@ class WTSTranslatorApp(ctk.CTk):
         self.geometry("860x700")
         self.minsize(760, 600)
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
-
-        # Top bar with language toggle button
-        topbar = ctk.CTkFrame(self, fg_color="transparent")
-        topbar.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 0))
-        topbar.grid_columnconfigure(0, weight=1)
-
-        self.lang_btn = ctk.CTkButton(
-            topbar, text="", width=72, height=28,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._toggle_language)
-        self.lang_btn.grid(row=0, column=1, sticky="e")
+        self.grid_rowconfigure(0, weight=1)
 
         # Main tab view — tabs named in current language from the start
         self.tabs = ctk.CTkTabview(self)
-        self.tabs.grid(row=1, column=0, sticky="nsew", padx=12, pady=(4, 12))
-        self.tabs.add(STRINGS[self._lang]["tab_translate"])
-        self.tabs.add(STRINGS[self._lang]["tab_glossary"])
+        self.tabs.grid(row=0, column=0, sticky="nsew", padx=12, pady=(8, 12))
+        for key in ("tab_translate", "tab_glossary", "tab_config"):
+            self.tabs.add(STRINGS[self._lang][key])
 
-        # Content frames live inside the tabs — kept as references for rebuild
-        self._translate_content = ctk.CTkFrame(
-            self.tabs.tab(STRINGS[self._lang]["tab_translate"]),
-            fg_color="transparent")
-        self._translate_content.grid(row=0, column=0, sticky="nsew")
-        self.tabs.tab(STRINGS[self._lang]["tab_translate"]).grid_columnconfigure(0, weight=1)
-        self.tabs.tab(STRINGS[self._lang]["tab_translate"]).grid_rowconfigure(0, weight=1)
+        def _make_content(tab_key):
+            f = ctk.CTkFrame(self.tabs.tab(STRINGS[self._lang][tab_key]),
+                             fg_color="transparent")
+            f.grid(row=0, column=0, sticky="nsew")
+            self.tabs.tab(STRINGS[self._lang][tab_key]).grid_columnconfigure(0, weight=1)
+            self.tabs.tab(STRINGS[self._lang][tab_key]).grid_rowconfigure(0, weight=1)
+            return f
 
-        self._glossary_content = ctk.CTkFrame(
-            self.tabs.tab(STRINGS[self._lang]["tab_glossary"]),
-            fg_color="transparent")
-        self._glossary_content.grid(row=0, column=0, sticky="nsew")
-        self.tabs.tab(STRINGS[self._lang]["tab_glossary"]).grid_columnconfigure(0, weight=1)
-        self.tabs.tab(STRINGS[self._lang]["tab_glossary"]).grid_rowconfigure(0, weight=1)
+        self._translate_content = _make_content("tab_translate")
+        self._glossary_content  = _make_content("tab_glossary")
+        self._config_content    = _make_content("tab_config")
 
         self._build_translate_tab(self._translate_content)
         self._build_glossary_tab(self._glossary_content)
+        self._build_config_tab(self._config_content)
 
     # ── Translate tab ──────────────────────────────────────────────────────
     def _build_translate_tab(self, tab):
@@ -420,7 +485,7 @@ class WTSTranslatorApp(ctk.CTk):
         tab.grid_rowconfigure(5, weight=1)
 
         # File input
-        src = ctk.CTkFrame(tab)
+        src = ctk.CTkFrame(tab, fg_color="transparent")
         src.grid(row=0, column=0, sticky="ew", pady=(8, 0))
         src.grid_columnconfigure(0, weight=1)
 
@@ -444,7 +509,7 @@ class WTSTranslatorApp(ctk.CTk):
                             padx=12, pady=(0, 10))
 
         # Output folder
-        out = ctk.CTkFrame(tab)
+        out = ctk.CTkFrame(tab, fg_color="transparent")
         out.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         out.grid_columnconfigure(0, weight=1)
 
@@ -460,7 +525,7 @@ class WTSTranslatorApp(ctk.CTk):
         self.browse_out_btn.grid(row=1, column=1, padx=(4, 12), pady=(0, 10))
 
         # Options
-        opt = ctk.CTkFrame(tab)
+        opt = ctk.CTkFrame(tab, fg_color="transparent")
         opt.grid(row=2, column=0, sticky="ew", pady=(6, 0))
         opt.grid_columnconfigure(1, weight=1)
         opt.grid_columnconfigure(3, weight=1)
@@ -506,7 +571,7 @@ class WTSTranslatorApp(ctk.CTk):
         self.progress_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
 
         # Console
-        con = ctk.CTkFrame(tab)
+        con = ctk.CTkFrame(tab, fg_color="transparent")
         con.grid(row=5, column=0, sticky="nsew", pady=(8, 0))
         con.grid_columnconfigure(0, weight=1)
         con.grid_rowconfigure(1, weight=1)
@@ -683,6 +748,208 @@ class WTSTranslatorApp(ctk.CTk):
                                  self._("save_error_msg", err=e))
 
     # ══════════════════════════════════════════════════════════════════════════
+    #  CONFIG TAB
+    # ══════════════════════════════════════════════════════════════════════════
+    def _build_config_tab(self, tab):
+        tab.grid_columnconfigure(0, weight=1)
+
+        scroll = ctk.CTkScrollableFrame(tab, fg_color="transparent")
+        scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        scroll.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
+
+        def section(parent, row, str_key):
+            lbl = ctk.CTkLabel(parent, text=self._(str_key),
+                               font=ctk.CTkFont(size=14, weight="bold"),
+                               fg_color="transparent")
+            lbl.grid(row=row, column=0, sticky="w", padx=16, pady=(18, 4))
+            sep = ctk.CTkFrame(parent, height=1, fg_color=("gray75", "gray35"))
+            sep.grid(row=row+1, column=0, sticky="ew", padx=16, pady=(0, 8))
+            return lbl, sep
+
+        # ── AI Provider ───────────────────────────────────────────────────────
+        self._cfg_provider_lbl, _ = section(scroll, 0, "cfg_provider")
+
+        prow = ctk.CTkFrame(scroll, fg_color="transparent")
+        prow.grid(row=2, column=0, sticky="ew", padx=16, pady=4)
+        prow.grid_columnconfigure(1, weight=1)
+
+        self._cfg_lbl_provider = ctk.CTkLabel(prow, text=self._("cfg_provider_lbl"), width=90)
+        self._cfg_lbl_provider.grid(row=0, column=0, sticky="w")
+
+        self._cfg_provider_var = tk.StringVar(
+            value=PROVIDERS[self._provider]["label"])
+        self._cfg_provider_menu = ctk.CTkOptionMenu(
+            prow, variable=self._cfg_provider_var,
+            values=PROVIDER_LABELS, width=200,
+            command=self._on_provider_change)
+        self._cfg_provider_menu.grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        mrow = ctk.CTkFrame(scroll, fg_color="transparent")
+        mrow.grid(row=3, column=0, sticky="ew", padx=16, pady=4)
+        mrow.grid_columnconfigure(1, weight=1)
+
+        self._cfg_lbl_model = ctk.CTkLabel(mrow, text=self._("cfg_model_lbl"), width=90)
+        self._cfg_lbl_model.grid(row=0, column=0, sticky="w")
+
+        self._cfg_model_menu = ctk.CTkOptionMenu(
+            mrow, variable=self.model_var,
+            values=self.available_models, width=200)
+        self._cfg_model_menu.grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        krow = ctk.CTkFrame(scroll, fg_color="transparent")
+        krow.grid(row=4, column=0, sticky="ew", padx=16, pady=4)
+        krow.grid_columnconfigure(1, weight=1)
+
+        self._cfg_lbl_apikey = ctk.CTkLabel(krow, text=self._("cfg_apikey_lbl"), width=90)
+        self._cfg_lbl_apikey.grid(row=0, column=0, sticky="w")
+
+        self._cfg_apikey_var = tk.StringVar(value=self._api_key)
+        self._cfg_apikey_entry = ctk.CTkEntry(
+            krow, textvariable=self._cfg_apikey_var,
+            placeholder_text=self._("cfg_apikey_ph"),
+            show="*", width=320)
+        self._cfg_apikey_entry.grid(row=0, column=1, sticky="ew", padx=(8, 4))
+
+        self._cfg_apikey_show_btn = ctk.CTkButton(
+            krow, text=self._("cfg_apikey_show"), width=32, height=28,
+            fg_color="transparent", border_width=1,
+            command=self._toggle_apikey_visibility)
+        self._cfg_apikey_show_btn.grid(row=0, column=2, padx=(0, 0))
+
+        # Note about ollama / api key requirement
+        self._cfg_note = ctk.CTkLabel(
+            scroll, text=self._("cfg_ollama_note"),
+            text_color="gray", font=ctk.CTkFont(size=12),
+            fg_color="transparent", wraplength=500, justify="left")
+        self._cfg_note.grid(row=5, column=0, sticky="w", padx=16, pady=(2, 4))
+        self._update_provider_ui()
+
+        # Test + Save buttons
+        brow = ctk.CTkFrame(scroll, fg_color="transparent")
+        brow.grid(row=6, column=0, sticky="w", padx=16, pady=(6, 4))
+
+        self._cfg_test_btn = ctk.CTkButton(
+            brow, text=self._("cfg_test_btn"), width=180,
+            command=self._test_connection)
+        self._cfg_test_btn.pack(side="left", padx=(0, 10))
+
+        self._cfg_save_btn = ctk.CTkButton(
+            brow, text=self._("cfg_save_btn"), width=180,
+            command=self._save_config)
+        self._cfg_save_btn.pack(side="left")
+
+        self._cfg_status = ctk.CTkLabel(
+            scroll, text="", font=ctk.CTkFont(size=12),
+            fg_color="transparent", wraplength=520, justify="left")
+        self._cfg_status.grid(row=7, column=0, sticky="w", padx=16, pady=(2, 4))
+
+        # ── Language ─────────────────────────────────────────────────────────
+        self._cfg_lang_lbl, _ = section(scroll, 8, "cfg_language")
+
+        lang_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        lang_row.grid(row=10, column=0, sticky="w", padx=16, pady=4)
+
+        self._cfg_lang_es_btn = ctk.CTkButton(
+            lang_row, text="🇦🇷  Español", width=140,
+            command=lambda: self._set_language("es"))
+        self._cfg_lang_es_btn.pack(side="left", padx=(0, 8))
+
+        self._cfg_lang_en_btn = ctk.CTkButton(
+            lang_row, text="🇬🇧  English", width=140,
+            command=lambda: self._set_language("en"))
+        self._cfg_lang_en_btn.pack(side="left")
+
+        # ── Theme ─────────────────────────────────────────────────────────────
+        self._cfg_theme_lbl, _ = section(scroll, 11, "cfg_theme")
+
+        theme_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        theme_row.grid(row=13, column=0, sticky="w", padx=16, pady=4)
+
+        for theme, str_key in (("Dark", "cfg_theme_dark"),
+                               ("Light", "cfg_theme_light"),
+                               ("System", "cfg_theme_system")):
+            btn = ctk.CTkButton(
+                theme_row, text=self._(str_key), width=110,
+                command=lambda t=theme: ctk.set_appearance_mode(t))
+            btn.pack(side="left", padx=(0, 8))
+
+        # ── About ─────────────────────────────────────────────────────────────
+        self._cfg_about_lbl, _ = section(scroll, 14, "cfg_about")
+
+        self._cfg_about_text = ctk.CTkLabel(
+            scroll, text=self._("cfg_about_text"),
+            justify="left", font=ctk.CTkFont(size=12),
+            fg_color="transparent", wraplength=520)
+        self._cfg_about_text.grid(row=16, column=0, sticky="w", padx=16, pady=(4, 16))
+
+    def _on_provider_change(self, label):
+        for key, info in PROVIDERS.items():
+            if info["label"] == label:
+                self._provider = key
+                break
+        models = (
+            get_ollama_models() if self._provider == "ollama"
+            else PROVIDERS[self._provider]["models"]
+        )
+        self.available_models = models
+        self._cfg_model_menu.configure(values=models)
+        self.model_var.set(models[0] if models else "")
+        self._update_provider_ui()
+
+    def _update_provider_ui(self):
+        needs_key = PROVIDERS[self._provider]["needs_key"]
+        state = "normal" if needs_key else "disabled"
+        self._cfg_apikey_entry.configure(state=state)
+        self._cfg_apikey_show_btn.configure(state=state)
+        note_key = "cfg_key_needed" if needs_key else "cfg_ollama_note"
+        self._cfg_note.configure(text=self._(note_key))
+
+    def _toggle_apikey_visibility(self):
+        current = self._cfg_apikey_entry.cget("show")
+        self._cfg_apikey_entry.configure(show="" if current == "*" else "*")
+
+    def _test_connection(self):
+        self._cfg_status.configure(text=self._("cfg_test_running"), text_color="gray")
+        self._cfg_test_btn.configure(state="disabled")
+        provider = self._provider
+        api_key  = self._cfg_apikey_var.get().strip()
+        model    = self.model_var.get().strip()
+
+        def run():
+            try:
+                from translator import _call_llm, _SINGLE_SYSTEM
+                result = _call_llm(
+                    "Hello", _SINGLE_SYSTEM, model,
+                    provider=provider, api_key=api_key or None)
+                msg = self._("cfg_test_ok", model=model)
+                self.after(0, lambda: self._cfg_status.configure(
+                    text=msg, text_color="green"))
+            except Exception as e:
+                msg = self._("cfg_test_fail", err=str(e)[:120])
+                self.after(0, lambda: self._cfg_status.configure(
+                    text=msg, text_color="red"))
+            finally:
+                self.after(0, lambda: self._cfg_test_btn.configure(state="normal"))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _save_config(self):
+        cfg = load_config()
+        cfg["provider"] = self._provider
+        cfg["api_key"]  = self._cfg_apikey_var.get().strip()
+        cfg["model"]    = self.model_var.get().strip()
+        cfg["lang"]     = self._lang
+        save_config(cfg)
+        self._api_key = cfg["api_key"]
+        self._cfg_status.configure(
+            text=self._("cfg_saved"), text_color="green")
+
+    def _set_language(self, lang):
+        self._lang = lang
+        self._apply_language()
+
+    # ══════════════════════════════════════════════════════════════════════════
     #  DRAG & DROP
     # ══════════════════════════════════════════════════════════════════════════
     def _setup_drag_drop(self):
@@ -805,6 +1072,8 @@ class WTSTranslatorApp(ctk.CTk):
                     output_path = output_path,
                     model       = model,
                     perf_opts   = perf,
+                    provider    = self._provider,
+                    api_key     = self._api_key or None,
                     progress_cb = lambda c, t: self.after(0, self._update_progress, c, t),
                     log_cb      = lambda m:    self.after(0, self._log, m)
                 )

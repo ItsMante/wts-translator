@@ -1,7 +1,9 @@
 import re
 import json
 import os
-import ollama
+
+# Providers are imported lazily inside _call_llm to avoid hard dependencies
+# — the user only needs the SDK for the provider they actually use.
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  GLOSSARY
@@ -242,21 +244,91 @@ Usa español latino natural. No uses "vosotros".\
 """
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  LLM CALL
+#  LLM CALL  —  multi-provider dispatcher
 # ══════════════════════════════════════════════════════════════════════════════
-def _call_ollama(user_text, system_text, model, temperature=0.1, perf_opts=None):
-    opts = {"temperature": temperature, "top_p": 0.9, "repeat_penalty": 1.1}
-    if perf_opts:
-        opts.update(perf_opts)
-    resp = ollama.chat(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_text},
-            {"role": "user",   "content": user_text}
-        ],
-        options=opts
-    )
-    r = resp["message"]["content"].strip()
+def _call_llm(user_text, system_text, model, temperature=0.1,
+              provider="ollama", api_key=None, perf_opts=None):
+    """Call the appropriate LLM provider and return the response string.
+
+    provider: "ollama" | "anthropic" | "openai" | "gemini" | "deepseek"
+    api_key:  required for all providers except ollama
+    perf_opts: dict of ollama-specific options (ignored for API providers)
+    """
+
+    # ── Ollama (local) ────────────────────────────────────────────────────────
+    if provider == "ollama":
+        import ollama as _ollama
+        opts = {"temperature": temperature, "top_p": 0.9, "repeat_penalty": 1.1}
+        if perf_opts:
+            opts.update(perf_opts)
+        resp = _ollama.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_text},
+                {"role": "user",   "content": user_text}
+            ],
+            options=opts
+        )
+        r = resp["message"]["content"].strip()
+
+    # ── Anthropic ─────────────────────────────────────────────────────────────
+    elif provider == "anthropic":
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            system=system_text,
+            messages=[{"role": "user", "content": user_text}]
+        )
+        r = resp.content[0].text.strip()
+
+    # ── OpenAI ────────────────────────────────────────────────────────────────
+    elif provider == "openai":
+        import openai as _openai
+        client = _openai.OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=model,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system_text},
+                {"role": "user",   "content": user_text}
+            ]
+        )
+        r = resp.choices[0].message.content.strip()
+
+    # ── DeepSeek (OpenAI-compatible API) ─────────────────────────────────────
+    elif provider == "deepseek":
+        import openai as _openai
+        client = _openai.OpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com"
+        )
+        resp = client.chat.completions.create(
+            model=model,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system_text},
+                {"role": "user",   "content": user_text}
+            ]
+        )
+        r = resp.choices[0].message.content.strip()
+
+    # ── Gemini ────────────────────────────────────────────────────────────────
+    elif provider == "gemini":
+        import google.generativeai as _genai
+        _genai.configure(api_key=api_key)
+        gemini = _genai.GenerativeModel(
+            model_name=model,
+            system_instruction=system_text
+        )
+        resp = gemini.generate_content(user_text)
+        r = resp.text.strip()
+
+    else:
+        raise ValueError(f"Proveedor desconocido: {provider}")
+
+    # Strip surrounding quotes that some models add
     if r.startswith('"') and r.endswith('"'):
         r = r[1:-1]
     return r
@@ -285,30 +357,35 @@ def _parse_batch_response(response, count):
             results[idx] = re.sub(r'(?<!\\)\\n', '\n', text)
     return results
 
-def _translate_batch(protected_texts, model, perf_opts=None):
+def _translate_batch(protected_texts, model, perf_opts=None,
+                     provider="ollama", api_key=None):
     if not protected_texts:
         return []
     prompt   = _build_batch_prompt(protected_texts)
-    response = _call_ollama(prompt, _BATCH_SYSTEM, model,
-                            temperature=0.1, perf_opts=perf_opts)
+    response = _call_llm(prompt, _BATCH_SYSTEM, model,
+                         temperature=0.1, provider=provider,
+                         api_key=api_key, perf_opts=perf_opts)
     parsed   = _parse_batch_response(response, len(protected_texts))
     return [parsed.get(i + 1) for i in range(len(protected_texts))]
 
-def _translate_single(text, model, glossary, perf_opts=None):
+def _translate_single(text, model, glossary, perf_opts=None,
+                      provider="ollama", api_key=None):
     # 1. Protect tags first
     protected, tag_map = protect_tags(text)
     # 2. Apply glossary to protected text
     protected = preprocess_glossary(protected, glossary)
     safe      = protected.replace("\n", "\\n")
 
-    result = _call_ollama(safe, _SINGLE_SYSTEM, model,
-                          temperature=0.15, perf_opts=perf_opts)
+    result = _call_llm(safe, _SINGLE_SYSTEM, model,
+                       temperature=0.15, provider=provider,
+                       api_key=api_key, perf_opts=perf_opts)
     result = re.sub(r'(?<!\\)\\n', '\n', result)
 
     # Retry if still English
     if is_english(strip_tags(result)):
-        result2 = _call_ollama(safe, _SINGLE_SYSTEM, model,
-                               temperature=0.3, perf_opts=perf_opts)
+        result2 = _call_llm(safe, _SINGLE_SYSTEM, model,
+                            temperature=0.3, provider=provider,
+                            api_key=api_key, perf_opts=perf_opts)
         result2 = re.sub(r'(?<!\\)\\n', '\n', result2)
         if not is_english(strip_tags(result2)):
             result = result2
@@ -327,11 +404,15 @@ def _translate_single(text, model, glossary, perf_opts=None):
 #  MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 def translate_wts(filepath, output_path, model="gemma2", perf_opts=None,
-                  progress_cb=None, log_cb=None):
+                  progress_cb=None, log_cb=None,
+                  provider="ollama", api_key=None):
     """Translate a .wts file and write the result to output_path.
 
     All state (glossary, perf options) is local to this call, making it
     safe to call concurrently from multiple threads.
+
+    provider: 'ollama' | 'anthropic' | 'openai' | 'gemini' | 'deepseek'
+    api_key:  required for all providers except ollama
     """
     perf_opts = perf_opts or {}
     glossary  = load_glossary()
@@ -383,7 +464,9 @@ def translate_wts(filepath, output_path, model="gemma2", perf_opts=None,
 
         # LLM call
         try:
-            translated_list = _translate_batch(protected_list, model, perf_opts)
+            translated_list = _translate_batch(
+                protected_list, model, perf_opts,
+                provider=provider, api_key=api_key)
         except Exception as e:
             if log_cb:
                 log_cb(f"  !! Error en lote: {e} — reintentando uno a uno")
@@ -397,7 +480,9 @@ def translate_wts(filepath, output_path, model="gemma2", perf_opts=None,
                 if log_cb:
                     log_cb(f"  [{b['id']}] Reintento individual...")
                 try:
-                    translated = _translate_single(b["text"], model, glossary, perf_opts)
+                    translated = _translate_single(
+                        b["text"], model, glossary, perf_opts,
+                        provider=provider, api_key=api_key)
                     stats["retry"] += 1
                 except Exception as e2:
                     translated = b["text"]
