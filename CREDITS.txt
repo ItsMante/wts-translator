@@ -1,0 +1,54 @@
+============================================================
+  WTS Translator v1.0.0
+  Herramienta de traduccion de archivos .wts de Warcraft III
+============================================================
+
+AUTOR
+-----
+  Mateo Neufeld (SoyMante)
+
+
+ASISTENCIA EN DESARROLLO
+------------------------
+  Claude (Anthropic) — https://anthropic.com
+
+
+LIBRERIAS DE TERCEROS
+---------------------
+  customtkinter
+    Autor:   Tom Schimansky
+    Licencia: MIT
+    URL:     https://github.com/TomSchimansky/CustomTkinter
+
+  tkinterdnd2
+    Autor:   pmgagne / rdbende
+    Licencia: MIT
+    URL:     https://github.com/pmgagne/tkinterdnd2
+
+  Pillow (PIL)
+    Autores:  Alex Clark y contribuidores
+    Licencia: HPND (compatible MIT)
+    URL:     https://python-pillow.org
+
+  ollama-python
+    Autor:   Ollama Team
+    Licencia: MIT
+    URL:     https://github.com/ollama/ollama-python
+
+  Ollama
+    Autor:   Ollama Team
+    Licencia: MIT
+    URL:     https://ollama.com
+
+
+MODELOS DE IA
+-------------
+  gemma2
+    Desarrollado por Google DeepMind
+    Licencia: Gemma Terms of Use
+    URL:     https://ai.google.dev/gemma
+
+
+============================================================
+  Gracias a la comunidad de Warcraft III por la inspiracion.
+============================================================

@@ -1,0 +1,67 @@
+# WTS Translator — Warcraft III ES-LA
+
+Traductor local de archivos `.wts` de Warcraft III al español latino.
+Usa Ollama como motor de traducción (100% local, sin APIs externas).
+
+---
+
+## Requisitos previos
+
+- Python 3.x instalado
+- Ollama instalado (https://ollama.com/download)
+- Modelo `gemma2` descargado (`ollama pull gemma2` en CMD)
+
+---
+
+## Cómo usar
+
+### Primera vez
+Doble clic en `instalar_y_ejecutar.bat`
+Esto instala las dependencias y abre la app.
+
+### Las siguientes veces
+Doble clic en `ejecutar.bat`
+
+---
+
+## Uso de la app
+
+1. o usa Examinar y selecciona tu archivo wts.
+2. Elige la carpeta de destino para el archivo traducido
+3. Verifica que el modelo sea `gemma2` (puedes cambiarlo si instalaste otro)
+4. Haz clic en **Traducir**
+5. Observa el progreso en la barra y la consola
+6. Al terminar, el archivo `nombre_es.wts` estará en la carpeta elegida
+
+---
+
+## Estructura del proyecto
+
+```
+wts_translator/
+├── app.py                  ← Interfaz gráfica
+├── translator.py           ← Motor de traducción y parser WTS
+├── glossary.json           ← Glosario de términos Warcraft III ES-LA
+├── ejecutar.bat            ← Lanzador rápido
+└── instalar_y_ejecutar.bat ← Instalador + lanzador (primera vez)
+```
+
+---
+
+## Personalizar el glosario
+
+En la ventana de usuario, puede seleccionar el glosario, ver varias categorías y palabras preseleccionadas, agregar las que considere necesarias y guardar antes de usar.
+
+---
+
+## Solución de problemas
+
+**"Error de conexión con Ollama"**
+→ Abre CMD y escribe `ollama serve`, luego intenta de nuevo.
+
+**La traducción es lenta**
+→ Normal en CPU. Con GPU (NVIDIA) Ollama la usa automáticamente.
+
+**Quiero usar otro modelo**
+→ Cambia `gemma2` por `mistral` u otro en el campo "Modelo Ollama" de la app.
+   Primero descárgalo con `ollama pull nombre_modelo`.
