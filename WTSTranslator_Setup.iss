@@ -7,7 +7,7 @@
 #define AppName      "WTS Translator"
 #define AppVersion   "1.0.0"
 #define AppPublisher "SoyMante"
-#define AppURL       "https://github.com/ItsMante"
+#define AppURL       "https://github.com/ItsMante/wts-translator""
 #define AppExe       "WTS Translator.exe"
 #define AppIcon      "logo.ico"
 
