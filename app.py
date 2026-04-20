@@ -35,8 +35,22 @@ PROVIDERS = {
 PROVIDER_LABELS = [v["label"] for v in PROVIDERS.values()]
 PROVIDER_KEYS   = list(PROVIDERS.keys())
 
+def get_data_dir():
+    """Writable data folder — works both in dev and when installed in Program Files.
+
+    When running normally: %APPDATA%\WTS Translator\
+    Fallback (non-Windows): ~/.wts_translator/
+    """
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        folder = os.path.join(appdata, "WTS Translator")
+    else:
+        folder = os.path.join(os.path.expanduser("~"), ".wts_translator")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
 def get_config_path():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    return os.path.join(get_data_dir(), "config.json")
 
 def load_config():
     try:
@@ -277,7 +291,19 @@ def get_ollama_models():
         return ["gemma2"]
 
 def get_glossary_path():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "glossary.json")
+    """Glossary lives in AppData so it can be written without admin rights.
+
+    On first run, copies the bundled default glossary.json to AppData
+    so the user starts with the pre-filled terms.
+    """
+    dest = os.path.join(get_data_dir(), "glossary.json")
+    if not os.path.exists(dest):
+        # Copy the read-only bundled default to the writable AppData folder
+        bundled = resource_path("glossary.json")
+        if os.path.exists(bundled):
+            import shutil
+            shutil.copy2(bundled, dest)
+    return dest
 
 def load_glossary_file():
     with open(get_glossary_path(), "r", encoding="utf-8") as f:

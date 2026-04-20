@@ -8,9 +8,25 @@ import os
 # ══════════════════════════════════════════════════════════════════════════════
 #  GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
-def load_glossary(path="glossary.json"):
-    here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, path), "r", encoding="utf-8") as f:
+def _get_appdata_glossary():
+    """Return the writable glossary path in AppData (mirrors app.py logic)."""
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        folder = os.path.join(appdata, "WTS Translator")
+    else:
+        folder = os.path.join(os.path.expanduser("~"), ".wts_translator")
+    return os.path.join(folder, "glossary.json")
+
+def load_glossary(path=None):
+    """Load glossary — prefers the writable AppData copy, falls back to bundled."""
+    if path is None:
+        appdata_path = _get_appdata_glossary()
+        if os.path.exists(appdata_path):
+            path = appdata_path
+        else:
+            # Fallback: bundled glossary next to the script (dev mode)
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "glossary.json")
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -188,27 +204,31 @@ def should_skip(text, glossary):
 def preprocess_glossary(text, glossary):
     """Replace glossary terms in protected text.
 
-    Searches on the visible (stripped) portion but replaces in the original
-    so that terms wrapped in color tags (|cXXXXword|r → @@T0@@word@@T1@@)
-    are still matched correctly.
+    Iterates over ALL categories in the glossary dict dynamically, so
+    user-added categories (e.g. 'objects', 'spells') are picked up
+    automatically without any code changes.
+
+    Longer terms are applied before shorter ones to avoid partial matches
+    (e.g. 'Death Knight' before 'Knight').
     """
     result = text
-    all_maps = [
-        glossary.get("proper_nouns_keep", {}),
-        glossary.get("factions", {}),
-        glossary.get("units", {}),
-        glossary.get("places", {}),
-        glossary.get("titles_and_ranks", {}),
-        glossary.get("quest_keywords", {}),
-        glossary.get("abilities", {}),
-    ]
-    for mapping in all_maps:
-        for en, es in sorted(mapping.items(), key=lambda x: -len(x[0])):
-            if not en or en == es:
-                continue
-            # Match the term whether it appears bare or between placeholders
-            pattern = r'(?<![A-Za-z])' + re.escape(en) + r'(?![A-Za-z])'
-            result = re.sub(pattern, es, result)
+
+    # Collect every entry from every category, sort longest-first globally
+    all_entries = []
+    for category, mapping in glossary.items():
+        if not isinstance(mapping, dict):
+            continue
+        for en, es in mapping.items():
+            if en and es and en != es:
+                all_entries.append((en, es))
+
+    # Sort longest term first to prevent shorter terms clobbering longer ones
+    all_entries.sort(key=lambda x: -len(x[0]))
+
+    for en, es in all_entries:
+        pattern = r'(?<![A-Za-z])' + re.escape(en) + r'(?![A-Za-z])'
+        result = re.sub(pattern, es, result)
+
     return result
 
 # ══════════════════════════════════════════════════════════════════════════════
