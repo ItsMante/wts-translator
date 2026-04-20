@@ -1,6 +1,7 @@
 import re
 import json
 import os
+import hashlib
 
 # Providers are imported lazily inside _call_llm to avoid hard dependencies
 # — the user only needs the SDK for the provider they actually use.
@@ -28,6 +29,37 @@ def load_glossary(path=None):
             path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "glossary.json")
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TRANSLATION CACHE
+# ══════════════════════════════════════════════════════════════════════════════
+def _get_cache_path():
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        folder = os.path.join(appdata, "WTS Translator")
+    else:
+        folder = os.path.join(os.path.expanduser("~"), ".wts_translator")
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, "cache.json")
+
+def _cache_key(text):
+    """MD5 hash of the clean text, independent of string ID or map."""
+    clean = re.sub(r'\s+', ' ', strip_tags(text)).strip().lower()
+    return hashlib.md5(clean.encode("utf-8")).hexdigest()
+
+def load_cache():
+    try:
+        with open(_get_cache_path(), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_cache(cache):
+    try:
+        with open(_get_cache_path(), "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  WTS PARSER / BUILDER
@@ -420,6 +452,13 @@ def _translate_single(text, model, glossary, perf_opts=None,
         return text
     return result
 
+def save_wts_blocks(blocks, output_path):
+    """Write a list of blocks (after optional diff editing) to output_path."""
+    output = build_wts(blocks)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(output)
+    return output_path
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
@@ -436,11 +475,13 @@ def translate_wts(filepath, output_path, model="gemma2", perf_opts=None,
     """
     perf_opts = perf_opts or {}
     glossary  = load_glossary()
+    cache     = load_cache()
     blocks    = parse_wts(filepath)
 
     # Classify blocks
     to_translate = []
     n_skipped    = 0
+    n_cached     = 0
 
     for i, b in enumerate(blocks):
         if b["empty"]:
@@ -454,14 +495,23 @@ def translate_wts(filepath, output_path, model="gemma2", perf_opts=None,
             if log_cb:
                 log_cb(f"[{b['id']}] [{reason}] {strip_tags(b['text']).strip()[:50]}")
         else:
-            to_translate.append((i, b))
+            # Check cache before queuing for translation
+            key = _cache_key(b["text"])
+            if key in cache:
+                b["translated"] = cache[key]["translated"]
+                b["_cache_hit"] = True
+                n_cached += 1
+            else:
+                b["_cache_key"] = key
+                to_translate.append((i, b))
 
     total = len(to_translate)
     done  = 0
-    stats = {"lote": 0, "retry": 0, "warn": 0}
+    stats = {"lote": 0, "retry": 0, "warn": 0, "cached": n_cached}
 
     if log_cb:
-        log_cb(f"\nArchivo: {len(blocks)} strings | {total} a traducir | {n_skipped} omitidos")
+        log_cb(f"\nArchivo: {len(blocks)} strings | {total} a traducir | "
+               f"{n_skipped} omitidos | {n_cached} del cache")
         log_cb(f"Modelo: {model} | Lote: {BATCH_SIZE} strings por llamada")
         log_cb("─" * 48)
 
@@ -527,6 +577,7 @@ def translate_wts(filepath, output_path, model="gemma2", perf_opts=None,
                     preview = strip_tags(b["text"]).strip()[:45]
                     log_cb(f"  ⚠ Sin traducir — STRING {b['id']}: {preview}")
                 stats["warn"] += 1
+                b["_warn"] = True
 
             orig_lines   = b["text"].strip().count("\n")
             result_lines = translated.strip().count("\n")
@@ -535,21 +586,41 @@ def translate_wts(filepath, output_path, model="gemma2", perf_opts=None,
                     log_cb(f"  ⚠ Alucinación — STRING {b['id']} revertido")
                 translated = b["text"]
                 stats["warn"] += 1
+                b["_warn"] = True
 
             b["translated"] = translated
+
+            # Store result in cache (only if translation looks valid)
+            if not is_english(strip_tags(translated)) and not has_orphan_placeholders(translated):
+                cache_key = b.get("_cache_key")
+                if cache_key:
+                    cache[cache_key] = {
+                        "original":   strip_tags(b["text"]).strip(),
+                        "translated": translated,
+                        "model":      model,
+                        "provider":   provider,
+                    }
+
             done += 1
             if progress_cb:
                 progress_cb(done, total)
 
-    output = build_wts(blocks)
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(output)
+    # Persist cache after translation
+    save_cache(cache)
+
+    # Return blocks so the caller can show a diff preview before saving.
+    # If output_path is None, skip writing and just return the blocks.
+    if output_path is not None:
+        output = build_wts(blocks)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(output)
 
     if log_cb:
         log_cb("─" * 48)
         log_cb(f"✓ Completado — {stats['lote']} en lote | "
                f"{stats['retry']} reintentados | "
+               f"{n_cached} del cache | "
                f"{stats['warn']} advertencias")
         log_cb(f"  Guardado en: {output_path}")
 
-    return output_path
+    return output_path, blocks

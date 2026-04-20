@@ -5,7 +5,7 @@ import threading
 import json
 import os
 import sys
-from translator import translate_wts
+from translator import translate_wts, save_wts_blocks
 
 def resource_path(relative):
     """Devuelve la ruta correcta tanto en desarrollo como compilado con PyInstaller."""
@@ -103,6 +103,22 @@ STRINGS = {
         "lbl_glossary_editor":  "Editor de Glosario",
         "btn_save_glossary":    "💾  Guardar cambios",
         "btn_add_category":     "+ Categoría",
+        "btn_import_glossary":  "⬆  Importar",
+        "btn_export_glossary":  "⬇  Exportar",
+        "import_title":         "Importar Glosario",
+        "import_invalid":       "El archivo no es un glosario válido.",
+        "import_summary":       "{new} términos nuevos, {conflict} conflictos encontrados.",
+        "import_mode_merge":    "Combinar (conservar existentes)",
+        "import_mode_replace":  "Reemplazar todo",
+        "import_done":          "Glosario importado: {new} términos añadidos.",
+        "export_title":         "Exportar Glosario",
+        "export_done":          "Glosario exportado correctamente.",
+        "export_error":         "No se pudo exportar: {err}",
+        "import_btn_merge":     "Combinar",
+        "import_btn_replace":   "Reemplazar",
+        "import_btn_cancel":    "Cancelar",
+        "import_conflict_note": "{conflict} términos ya existen y no serán reemplazados.",
+
         "lbl_english":          "Inglés",
         "lbl_spanish":          "Español",
         "btn_add_entry":        "+ Añadir",
@@ -159,6 +175,24 @@ STRINGS = {
         "cfg_theme_dark":       "Oscuro",
         "cfg_theme_light":      "Claro",
         "cfg_theme_system":     "Sistema",
+        "cfg_diff":             "Vista previa",
+        "cfg_diff_toggle":      "Mostrar vista previa antes de guardar",
+        "diff_title":           "Vista previa — Revision antes de guardar",
+        "diff_col_id":          "ID",
+        "diff_col_orig":        "Original",
+        "diff_col_trans":       "Traducido",
+        "diff_btn_save":        "✓  Guardar seleccionados",
+        "diff_btn_cancel":      "✕  Cancelar",
+        "diff_btn_selall":      "Seleccionar todo",
+        "diff_btn_selnone":     "Deseleccionar todo",
+        "diff_btn_selwarn":     "Solo advertencias",
+        "diff_warn_label":      "⚠ advertencias",
+        "diff_cached_label":    "del cache",
+        "diff_summary":         "{total} strings | {warns} advertencias | {cached} del cache",
+        "cfg_cache":            "Cache de traducciones",
+        "cfg_cache_clear":      "🗑  Limpiar cache",
+        "cfg_cache_cleared":    "Cache eliminado correctamente.",
+        "cfg_cache_size":       "Entradas en cache: {n}",
         "cfg_about":            "Acerca de",
         "cfg_about_text":       "WTS Translator v1.0.0\nDesarrollado por Mateo Neufeld (SoyMante)\nAsistencia: Claude (Anthropic)\ngithub.com/ItsMante/wts-translator",
         "cfg_ollama_note":      "ℹ  Ollama no requiere API Key — corre localmente en tu PC.",
@@ -201,6 +235,22 @@ STRINGS = {
         "lbl_glossary_editor":  "Glossary Editor",
         "btn_save_glossary":    "💾  Save changes",
         "btn_add_category":     "+ Category",
+        "btn_import_glossary":  "⬆  Import",
+        "btn_export_glossary":  "⬇  Export",
+        "import_title":         "Import Glossary",
+        "import_invalid":       "The file is not a valid glossary.",
+        "import_summary":       "{new} new terms, {conflict} conflicts found.",
+        "import_mode_merge":    "Merge (keep existing)",
+        "import_mode_replace":  "Replace all",
+        "import_done":          "Glossary imported: {new} terms added.",
+        "export_title":         "Export Glossary",
+        "export_done":          "Glossary exported successfully.",
+        "export_error":         "Could not export: {err}",
+        "import_btn_merge":     "Merge",
+        "import_btn_replace":   "Replace",
+        "import_btn_cancel":    "Cancel",
+        "import_conflict_note": "{conflict} terms already exist and will not be replaced.",
+
         "lbl_english":          "English",
         "lbl_spanish":          "Spanish",
         "btn_add_entry":        "+ Add",
@@ -257,6 +307,24 @@ STRINGS = {
         "cfg_theme_dark":       "Dark",
         "cfg_theme_light":      "Light",
         "cfg_theme_system":     "System",
+        "cfg_diff":             "Preview",
+        "cfg_diff_toggle":      "Show preview before saving",
+        "diff_title":           "Preview — Review before saving",
+        "diff_col_id":          "ID",
+        "diff_col_orig":        "Original",
+        "diff_col_trans":       "Translated",
+        "diff_btn_save":        "✓  Save selected",
+        "diff_btn_cancel":      "✕  Cancel",
+        "diff_btn_selall":      "Select all",
+        "diff_btn_selnone":     "Deselect all",
+        "diff_btn_selwarn":     "Warnings only",
+        "diff_warn_label":      "⚠ warnings",
+        "diff_cached_label":    "from cache",
+        "diff_summary":         "{total} strings | {warns} warnings | {cached} from cache",
+        "cfg_cache":            "Translation cache",
+        "cfg_cache_clear":      "🗑  Clear cache",
+        "cfg_cache_cleared":    "Cache cleared successfully.",
+        "cfg_cache_size":       "Cached entries: {n}",
         "cfg_about":            "About",
         "cfg_about_text":       "WTS Translator v1.0.0\nDeveloped by Mateo Neufeld (SoyMante)\nAssistance: Claude (Anthropic)\ngithub.com/ItsMante/wts-translator",
         "cfg_ollama_note":      "ℹ  Ollama requires no API Key — it runs locally on your PC.",
@@ -344,9 +412,10 @@ class WTSTranslatorApp(ctk.CTk):
 
         # Load saved config
         cfg = load_config()
-        self._provider   = cfg.get("provider", "ollama")  # internal provider key
-        self._api_key    = cfg.get("api_key", "")
-        self._lang       = cfg.get("lang", self._lang)
+        self._provider      = cfg.get("provider", "ollama")
+        self._api_key       = cfg.get("api_key", "")
+        self._lang          = cfg.get("lang", self._lang)
+        self._show_diff     = cfg.get("show_diff", True)
 
         self.available_models = (
             get_ollama_models() if self._provider == "ollama"
@@ -408,6 +477,8 @@ class WTSTranslatorApp(ctk.CTk):
         self.lbl_glossary_editor.configure(text=s("lbl_glossary_editor"))
         self.save_glossary_btn.configure(text=s("btn_save_glossary"))
         self.add_category_btn.configure(text=s("btn_add_category"))
+        self.import_glossary_btn.configure(text=s("btn_import_glossary"))
+        self.export_glossary_btn.configure(text=s("btn_export_glossary"))
 
         # Rebuild glossary sub-tabs with new language labels
         self._rebuild_glossary_tabs()
@@ -634,6 +705,14 @@ class WTSTranslatorApp(ctk.CTk):
                                                command=self._save_glossary)
         self.save_glossary_btn.pack(side="right", padx=(8, 0))
 
+        self.export_glossary_btn = ctk.CTkButton(top, text="", width=100, height=30,
+                                                 command=self._export_glossary)
+        self.export_glossary_btn.pack(side="right", padx=(4, 0))
+
+        self.import_glossary_btn = ctk.CTkButton(top, text="", width=100, height=30,
+                                                 command=self._import_glossary)
+        self.import_glossary_btn.pack(side="right", padx=(4, 0))
+
         self.add_category_btn = ctk.CTkButton(top, text="", width=120, height=30,
                                               command=self._add_category)
         self.add_category_btn.pack(side="right")
@@ -746,6 +825,71 @@ class WTSTranslatorApp(ctk.CTk):
             self._gloss_data[key].remove(row_vars)
         except ValueError:
             pass
+
+    def _export_glossary(self):
+        path = filedialog.asksaveasfilename(
+            title=self._("export_title"),
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json"), ("*", "*.*")],
+            initialfile="glossary.json")
+        if not path:
+            return
+        try:
+            # Build current glossary from UI state
+            data = load_glossary_file()
+            for key in self._gloss_data:
+                data[key] = {
+                    ev.get().strip(): sv.get().strip()
+                    for ev, sv in self._gloss_data[key]
+                    if ev.get().strip()
+                }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo(self._("export_title"),
+                                self._("export_done"))
+        except Exception as e:
+            messagebox.showerror(self._("error_title"),
+                                 self._("export_error", err=e))
+
+    def _import_glossary(self):
+        path = filedialog.askopenfilename(
+            title=self._("import_title"),
+            filetypes=[("JSON", "*.json"), ("*", "*.*")])
+        if not path:
+            return
+
+        # Validate and load the file
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                incoming = json.load(f)
+            if not isinstance(incoming, dict):
+                raise ValueError("root must be a dict")
+            for v in incoming.values():
+                if not isinstance(v, dict):
+                    raise ValueError("categories must be dicts")
+        except Exception:
+            messagebox.showerror(self._("import_title"),
+                                 self._("import_invalid"))
+            return
+
+        # Count new vs conflicting terms
+        current = load_glossary_file()
+        n_new = n_conflict = 0
+        for cat, entries in incoming.items():
+            cur_cat = current.get(cat, {})
+            for en in entries:
+                if en in cur_cat:
+                    n_conflict += 1
+                else:
+                    n_new += 1
+
+        # Show confirmation dialog
+        GlossaryImportDialog(self, incoming, current, n_new, n_conflict,
+                             self._reload_glossary_after_import)
+
+    def _reload_glossary_after_import(self):
+        """Reload the glossary UI after a successful import."""
+        self._load_glossary_ui()
 
     def _add_category(self):
         dialog = ctk.CTkInputDialog(
@@ -900,14 +1044,41 @@ class WTSTranslatorApp(ctk.CTk):
                 command=lambda t=theme: ctk.set_appearance_mode(t))
             btn.pack(side="left", padx=(0, 8))
 
-        # ── About ─────────────────────────────────────────────────────────────
-        self._cfg_about_lbl, _ = section(scroll, 14, "cfg_about")
+        # ── Cache ───────────────────────────────────────────────────
+        self._cfg_cache_lbl, _ = section(scroll, 14, "cfg_cache")
+
+        cache_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        cache_row.grid(row=16, column=0, sticky="w", padx=16, pady=4)
+
+        self._cfg_cache_clear_btn = ctk.CTkButton(
+            cache_row, text=self._("cfg_cache_clear"), width=160,
+            command=self._clear_cache)
+        self._cfg_cache_clear_btn.pack(side="left", padx=(0, 12))
+
+        self._cfg_cache_size_lbl = ctk.CTkLabel(
+            cache_row, text="", fg_color="transparent",
+            font=ctk.CTkFont(size=12), text_color="gray")
+        self._cfg_cache_size_lbl.pack(side="left")
+        self._refresh_cache_size()
+
+        # ── Preview ───────────────────────────────────────────────
+        self._cfg_diff_lbl, _ = section(scroll, 20, "cfg_diff")
+
+        self._cfg_diff_var = tk.BooleanVar(value=True)
+        self._cfg_diff_check = ctk.CTkCheckBox(
+            scroll, text=self._("cfg_diff_toggle"),
+            variable=self._cfg_diff_var)
+        self._cfg_diff_check.grid(row=22, column=0, sticky="w",
+                                   padx=16, pady=(4, 8))
+
+        # ── About ───────────────────────────────────────────────────
+        self._cfg_about_lbl, _ = section(scroll, 23, "cfg_about")
 
         self._cfg_about_text = ctk.CTkLabel(
             scroll, text=self._("cfg_about_text"),
             justify="left", font=ctk.CTkFont(size=12),
             fg_color="transparent", wraplength=520)
-        self._cfg_about_text.grid(row=16, column=0, sticky="w", padx=16, pady=(4, 16))
+        self._cfg_about_text.grid(row=25, column=0, sticky="w", padx=16, pady=(4, 16))
 
     def _on_provider_change(self, label):
         for key, info in PROVIDERS.items():
@@ -962,14 +1133,40 @@ class WTSTranslatorApp(ctk.CTk):
 
     def _save_config(self):
         cfg = load_config()
-        cfg["provider"] = self._provider
-        cfg["api_key"]  = self._cfg_apikey_var.get().strip()
-        cfg["model"]    = self.model_var.get().strip()
-        cfg["lang"]     = self._lang
+        cfg["provider"]   = self._provider
+        cfg["api_key"]    = self._cfg_apikey_var.get().strip()
+        cfg["model"]      = self.model_var.get().strip()
+        cfg["lang"]       = self._lang
+        cfg["show_diff"]  = self._cfg_diff_var.get()
+        self._show_diff   = cfg["show_diff"]
         save_config(cfg)
         self._api_key = cfg["api_key"]
         self._cfg_status.configure(
             text=self._("cfg_saved"), text_color="green")
+
+    def _refresh_cache_size(self):
+        try:
+            from translator import load_cache
+            n = len(load_cache())
+            self._cfg_cache_size_lbl.configure(
+                text=self._("cfg_cache_size", n=n))
+        except Exception:
+            pass
+
+    def _clear_cache(self):
+        try:
+            from translator import _get_cache_path
+            import os
+            path = _get_cache_path()
+            if os.path.exists(path):
+                os.remove(path)
+            self._cfg_cache_size_lbl.configure(
+                text=self._("cfg_cache_size", n=0))
+            self._cfg_status.configure(
+                text=self._("cfg_cache_cleared"), text_color="green")
+        except Exception as e:
+            self._cfg_status.configure(
+                text=str(e), text_color="red")
 
     def _set_language(self, lang):
         self._lang = lang
@@ -1091,11 +1288,15 @@ class WTSTranslatorApp(ctk.CTk):
         self._log(f"Model: {model}  |  {self.perf_var.get()}")
         self._log(self._("log_dest", path=output_path))
 
+        show_diff = self._show_diff
+
         def run():
             try:
-                translate_wts(
+                # If diff is on, skip writing — get blocks back for preview
+                out_arg = None if show_diff else output_path
+                _, blocks = translate_wts(
                     filepath    = src,
-                    output_path = output_path,
+                    output_path = out_arg,
                     model       = model,
                     perf_opts   = perf,
                     provider    = self._provider,
@@ -1103,11 +1304,22 @@ class WTSTranslatorApp(ctk.CTk):
                     progress_cb = lambda c, t: self.after(0, self._update_progress, c, t),
                     log_cb      = lambda m:    self.after(0, self._log, m)
                 )
-                self.after(0, self._on_done, output_path)
+                if show_diff:
+                    self.after(0, self._show_diff_window, blocks, output_path)
+                else:
+                    self.after(0, self._on_done, output_path)
             except Exception as e:
                 self.after(0, self._on_error, str(e))
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _show_diff_window(self, blocks, output_path):
+        """Open the diff preview window. Called from main thread."""
+        self.is_running = False
+        self.translate_btn.configure(state="normal", text=self._("btn_translate"))
+        self.progress_bar.set(1)
+        self.progress_label.configure(text=self._("progress_done"))
+        DiffPreviewWindow(self, blocks, output_path)
 
     def _on_done(self, output_path):
         self.is_running = False
@@ -1124,6 +1336,238 @@ class WTSTranslatorApp(ctk.CTk):
         self._log(f"\n!! ERROR: {error_msg}")
         messagebox.showerror(self._("error_title"),
                              self._("error_ollama", msg=error_msg))
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  GLOSSARY IMPORT DIALOG
+# ══════════════════════════════════════════════════════════════════════════════
+class GlossaryImportDialog(ctk.CTkToplevel):
+    """Confirmation dialog for glossary import with Merge/Replace options."""
+
+    def __init__(self, parent, incoming, current, n_new, n_conflict, on_success):
+        super().__init__(parent)
+        self._parent     = parent
+        self._incoming   = incoming
+        self._current    = current
+        self._on_success = on_success
+        s = parent._
+
+        self.title(s("import_title"))
+        self.geometry("420x220")
+        self.resizable(False, False)
+        self.grab_set()
+        self.focus_set()
+
+        self.grid_columnconfigure(0, weight=1)
+
+        # Summary
+        ctk.CTkLabel(
+            self,
+            text=s("import_summary", new=n_new, conflict=n_conflict),
+            fg_color="transparent",
+            font=ctk.CTkFont(size=13)
+        ).grid(row=0, column=0, padx=20, pady=(18, 4), sticky="w")
+
+        if n_conflict > 0:
+            ctk.CTkLabel(
+                self,
+                text=s("import_conflict_note", conflict=n_conflict),
+                fg_color="transparent",
+                text_color="gray",
+                font=ctk.CTkFont(size=11)
+            ).grid(row=1, column=0, padx=20, pady=(0, 12), sticky="w")
+
+        # Buttons
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.grid(row=2, column=0, padx=20, pady=(8, 0), sticky="w")
+
+        ctk.CTkButton(
+            btn_row,
+            text=s("import_btn_merge"),
+            width=120,
+            command=self._do_merge
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_row,
+            text=s("import_btn_replace"),
+            width=120,
+            fg_color=("#b03030", "#8b1a1a"),
+            hover_color=("#8b1a1a", "#6b0f0f"),
+            command=self._do_replace
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_row,
+            text=s("import_btn_cancel"),
+            width=90,
+            fg_color="transparent",
+            border_width=1,
+            command=self.destroy
+        ).pack(side="left")
+
+    def _do_merge(self):
+        """Add incoming terms without overwriting existing ones."""
+        data = self._current.copy()
+        n_added = 0
+        for cat, entries in self._incoming.items():
+            if cat not in data:
+                data[cat] = {}
+            for en, es in entries.items():
+                if en and en not in data[cat]:
+                    data[cat][en] = es
+                    n_added += 1
+        save_glossary_file(data)
+        self.destroy()
+        s = self._parent._
+        messagebox.showinfo(s("import_title"), s("import_done", new=n_added))
+        self._on_success()
+
+    def _do_replace(self):
+        """Replace the entire glossary with the incoming one."""
+        save_glossary_file(self._incoming)
+        self.destroy()
+        s = self._parent._
+        n_total = sum(len(v) for v in self._incoming.values()
+                      if isinstance(v, dict))
+        messagebox.showinfo(s("import_title"), s("import_done", new=n_total))
+        self._on_success()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DIFF PREVIEW WINDOW
+# ══════════════════════════════════════════════════════════════════════════════
+class DiffPreviewWindow(ctk.CTkToplevel):
+    """Modal window showing original vs translated strings before saving."""
+
+    WARN_BG  = ("#fff3cd", "#4a3800")
+    CACHE_FG = ("#1a7a3a", "#5dba7d")
+
+    def __init__(self, parent, blocks, output_path):
+        super().__init__(parent)
+        self._parent      = parent
+        self._blocks      = blocks
+        self._output_path = output_path
+        self._checks      = []
+
+        s = parent._
+
+        self.title(s("diff_title"))
+        self.geometry("1000x620")
+        self.minsize(800, 500)
+        self.grab_set()
+        self.focus_set()
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        # Toolbar
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+
+        ctk.CTkButton(bar, text=s("diff_btn_selall"), width=140,
+                      command=self._select_all).pack(side="left", padx=(0,6))
+        ctk.CTkButton(bar, text=s("diff_btn_selnone"), width=140,
+                      command=self._select_none).pack(side="left", padx=(0,6))
+        ctk.CTkButton(bar, text=s("diff_btn_selwarn"), width=160,
+                      command=self._select_warnings).pack(side="left", padx=(0,6))
+
+        translatable = [b for b in blocks if not b.get("empty")]
+        warns  = sum(1 for b in translatable if b.get("_warn"))
+        cached = sum(1 for b in translatable if b.get("_cache_hit"))
+        ctk.CTkLabel(bar,
+            text=s("diff_summary", total=len(translatable),
+                   warns=warns, cached=cached),
+            text_color="gray", fg_color="transparent",
+            font=ctk.CTkFont(size=12)).pack(side="right")
+
+        # Scrollable table
+        scroll = ctk.CTkScrollableFrame(self)
+        scroll.grid(row=1, column=0, sticky="nsew", padx=12, pady=4)
+        scroll.grid_columnconfigure(1, weight=1)
+        scroll.grid_columnconfigure(2, weight=2)
+
+        for col, key in [(0,"diff_col_id"),(1,"diff_col_orig"),(2,"diff_col_trans")]:
+            ctk.CTkLabel(scroll, text=s(key),
+                         font=ctk.CTkFont(weight="bold"),
+                         fg_color="transparent").grid(
+                row=0, column=col, sticky="w", padx=(6,4), pady=(0,6))
+
+        row_idx = 1
+        for b in blocks:
+            if b.get("empty"):
+                if not b.get("translated"):
+                    b["translated"] = b["text"]
+                continue
+            orig = b["text"].strip()
+            trans = b.get("translated", orig).strip()
+            if orig == trans:
+                continue
+
+            is_warn   = b.get("_warn", False)
+            is_cached = b.get("_cache_hit", False)
+            row_bg    = self.WARN_BG if is_warn else "transparent"
+
+            var = tk.BooleanVar(value=True)
+            self._checks.append((var, b))
+
+            id_frame = ctk.CTkFrame(scroll, fg_color=row_bg)
+            id_frame.grid(row=row_idx, column=0, sticky="nsew", padx=(4,2), pady=1)
+            ctk.CTkCheckBox(id_frame, text=str(b["id"]),
+                            variable=var, width=60).pack(padx=4, pady=2)
+
+            ctk.CTkLabel(scroll, text=orig[:200],
+                         fg_color=row_bg, wraplength=340,
+                         justify="left", anchor="nw",
+                         font=ctk.CTkFont(size=11)).grid(
+                row=row_idx, column=1, sticky="nsew", padx=(2,4), pady=1)
+
+            trans_var = tk.StringVar(value=trans)
+            b["_trans_var"] = trans_var
+            ctk.CTkEntry(scroll, textvariable=trans_var,
+                         font=ctk.CTkFont(size=11,
+                             weight="bold" if is_warn else "normal"),
+                         text_color=self.CACHE_FG if is_cached else None).grid(
+                row=row_idx, column=2, sticky="ew", padx=(2,4), pady=1)
+
+            row_idx += 1
+
+        # Bottom buttons
+        bot = ctk.CTkFrame(self, fg_color="transparent")
+        bot.grid(row=2, column=0, sticky="ew", padx=12, pady=(4, 10))
+
+        ctk.CTkButton(bot, text=s("diff_btn_save"),
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      width=200, height=36,
+                      command=self._save).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(bot, text=s("diff_btn_cancel"),
+                      fg_color="transparent", border_width=1,
+                      width=120, height=36,
+                      command=self.destroy).pack(side="left")
+
+    def _select_all(self):
+        for var, _ in self._checks:
+            var.set(True)
+
+    def _select_none(self):
+        for var, _ in self._checks:
+            var.set(False)
+
+    def _select_warnings(self):
+        for var, b in self._checks:
+            var.set(bool(b.get("_warn")))
+
+    def _save(self):
+        for var, b in self._checks:
+            if var.get():
+                edited = b.get("_trans_var")
+                if edited:
+                    b["translated"] = edited.get()
+            else:
+                b["translated"] = b["text"]
+        save_wts_blocks(self._blocks, self._output_path)
+        self.destroy()
+        self._parent._on_done(self._output_path)
+
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
