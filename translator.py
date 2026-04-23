@@ -10,13 +10,8 @@ import hashlib
 #  GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
 def _get_appdata_glossary():
-    """Return the writable glossary path in AppData (mirrors app.py logic)."""
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        folder = os.path.join(appdata, "WTS Translator")
-    else:
-        folder = os.path.join(os.path.expanduser("~"), ".wts_translator")
-    return os.path.join(folder, "glossary.json")
+    """Return the writable glossary path in AppData."""
+    return os.path.join(_get_appdata_dir(), "glossary.json")
 
 def load_glossary(path=None):
     """Load glossary — prefers the writable AppData copy, falls back to bundled."""
@@ -33,14 +28,18 @@ def load_glossary(path=None):
 # ══════════════════════════════════════════════════════════════════════════════
 #  TRANSLATION CACHE
 # ══════════════════════════════════════════════════════════════════════════════
-def _get_cache_path():
+_APP_FOLDER = "WTS Translator"
+
+def _get_appdata_dir():
+    """Return the writable AppData folder, creating it if needed."""
     appdata = os.environ.get("APPDATA")
-    if appdata:
-        folder = os.path.join(appdata, "WTS Translator")
-    else:
-        folder = os.path.join(os.path.expanduser("~"), ".wts_translator")
+    folder  = os.path.join(appdata, _APP_FOLDER) if appdata else \
+              os.path.join(os.path.expanduser("~"), ".wts_translator")
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, "cache.json")
+    return folder
+
+def _get_cache_path():
+    return os.path.join(_get_appdata_dir(), "cache.json")
 
 def _cache_key(text):
     """MD5 hash of the clean text, independent of string ID or map."""
@@ -233,6 +232,32 @@ def should_skip(text, glossary):
 # ══════════════════════════════════════════════════════════════════════════════
 #  GLOSSARY PRE-PROCESSING  (applied to already-protected text)
 # ══════════════════════════════════════════════════════════════════════════════
+# Cache compiled glossary patterns — keyed by glossary id() so we
+# recompile only when the glossary object changes (once per translation run).
+_glossary_pattern_cache: dict = {}
+
+def _build_glossary_patterns(glossary):
+    """Return sorted list of (compiled_pattern, replacement) for the glossary."""
+    key = id(glossary)
+    if key in _glossary_pattern_cache:
+        return _glossary_pattern_cache[key]
+
+    all_entries = []
+    for mapping in glossary.values():
+        if not isinstance(mapping, dict):
+            continue
+        for en, es in mapping.items():
+            if en and es and en != es:
+                all_entries.append((en, es))
+
+    all_entries.sort(key=lambda x: -len(x[0]))
+    patterns = [
+        (re.compile(r'(?<![A-Za-z])' + re.escape(en) + r'(?![A-Za-z])'), es)
+        for en, es in all_entries
+    ]
+    _glossary_pattern_cache[key] = patterns
+    return patterns
+
 def preprocess_glossary(text, glossary):
     """Replace glossary terms in protected text.
 
@@ -242,25 +267,11 @@ def preprocess_glossary(text, glossary):
 
     Longer terms are applied before shorter ones to avoid partial matches
     (e.g. 'Death Knight' before 'Knight').
+    Regex patterns are compiled once per glossary object and cached.
     """
     result = text
-
-    # Collect every entry from every category, sort longest-first globally
-    all_entries = []
-    for category, mapping in glossary.items():
-        if not isinstance(mapping, dict):
-            continue
-        for en, es in mapping.items():
-            if en and es and en != es:
-                all_entries.append((en, es))
-
-    # Sort longest term first to prevent shorter terms clobbering longer ones
-    all_entries.sort(key=lambda x: -len(x[0]))
-
-    for en, es in all_entries:
-        pattern = r'(?<![A-Za-z])' + re.escape(en) + r'(?![A-Za-z])'
-        result = re.sub(pattern, es, result)
-
+    for pattern, es in _build_glossary_patterns(glossary):
+        result = pattern.sub(es, result)
     return result
 
 # ══════════════════════════════════════════════════════════════════════════════

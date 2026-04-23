@@ -2,6 +2,23 @@
 
 ---
 
+## v1.4.0 — 2026-04-22
+
+### Nuevas características
+- **Búsqueda LLM en el glosario** — al agregar un término nuevo en el editor
+  de glosario, el botón 🔍 consulta al modelo configurado y sugiere la
+  traducción oficial de Warcraft directamente en el campo Español
+
+### Correcciones
+- **Vista previa diff** — ahora pagina en bloques de 100 strings, evitando
+  que la ventana se congele o no cargue en archivos con 1500+ strings
+- **Opción "Vista previa antes de guardar"** — el toggle ahora se guarda
+  automáticamente al cambiarlo, sin necesidad de presionar "Guardar
+  configuración", y se aplica desde la siguiente traducción
+- Eliminación de código muerto y mejoras menores de rendimiento
+
+---
+
 ## v1.3.0
 
 ### Nuevas características

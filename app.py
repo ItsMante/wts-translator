@@ -5,7 +5,10 @@ import threading
 import json
 import os
 import sys
-from translator import translate_wts, save_wts_blocks
+import shutil
+from translator import (translate_wts, save_wts_blocks,
+                        _call_llm, _SINGLE_SYSTEM,
+                        load_cache, _get_cache_path)
 
 def resource_path(relative):
     """Devuelve la ruta correcta tanto en desarrollo como compilado con PyInstaller."""
@@ -35,17 +38,13 @@ PROVIDERS = {
 PROVIDER_LABELS = [v["label"] for v in PROVIDERS.values()]
 PROVIDER_KEYS   = list(PROVIDERS.keys())
 
-def get_data_dir():
-    """Writable data folder — works both in dev and when installed in Program Files.
+_APP_FOLDER = "WTS Translator"
 
-    When running normally: %APPDATA%\WTS Translator\
-    Fallback (non-Windows): ~/.wts_translator/
-    """
+def get_data_dir():
+    """Writable data folder — AppData on Windows, ~/.wts_translator elsewhere."""
     appdata = os.environ.get("APPDATA")
-    if appdata:
-        folder = os.path.join(appdata, "WTS Translator")
-    else:
-        folder = os.path.join(os.path.expanduser("~"), ".wts_translator")
+    folder  = os.path.join(appdata, _APP_FOLDER) if appdata else \
+              os.path.join(os.path.expanduser("~"), ".wts_translator")
     os.makedirs(folder, exist_ok=True)
     return folder
 
@@ -104,6 +103,7 @@ STRINGS = {
         "btn_save_glossary":    "💾  Guardar cambios",
         "btn_add_category":     "+ Categoría",
         "btn_import_glossary":  "⬆  Importar",
+
         "btn_export_glossary":  "⬇  Exportar",
         "import_title":         "Importar Glosario",
         "import_invalid":       "El archivo no es un glosario válido.",
@@ -189,12 +189,18 @@ STRINGS = {
         "diff_warn_label":      "⚠ advertencias",
         "diff_cached_label":    "del cache",
         "diff_summary":         "{total} strings | {warns} advertencias | {cached} del cache",
+        "glookup_no_provider":  "Configurá un proveedor de IA en Configuración antes de buscar.",
+        "glookup_token_warn":   "Esta búsqueda consumirá tokens de tu API ({provider}). ¿Continuar?",
+        "glookup_searching":    "Consultando al modelo...",
+        "glookup_unknown":      "El modelo no encontró una traducción oficial para '{term}'.",
+        "glookup_error":        "Error en la búsqueda: {err}",
+        "glookup_tooltip":      "Buscar traducción oficial con IA",
         "cfg_cache":            "Cache de traducciones",
         "cfg_cache_clear":      "🗑  Limpiar cache",
         "cfg_cache_cleared":    "Cache eliminado correctamente.",
         "cfg_cache_size":       "Entradas en cache: {n}",
         "cfg_about":            "Acerca de",
-        "cfg_about_text":       "WTS Translator v1.0.0\nDesarrollado por Mateo Neufeld (SoyMante)\nAsistencia: Claude (Anthropic)\ngithub.com/ItsMante/wts-translator",
+        "cfg_about_text":       "WTS Translator v1.3.5\nDesarrollado por Mateo Neufeld (SoyMante)\nAsistencia: Claude (Anthropic)\ngithub.com/ItsMante/wts-translator",
         "cfg_ollama_note":      "ℹ  Ollama no requiere API Key — corre localmente en tu PC.",
         "cfg_key_needed":       "⚠  Este proveedor requiere una API Key para funcionar.",
     },
@@ -236,6 +242,7 @@ STRINGS = {
         "btn_save_glossary":    "💾  Save changes",
         "btn_add_category":     "+ Category",
         "btn_import_glossary":  "⬆  Import",
+
         "btn_export_glossary":  "⬇  Export",
         "import_title":         "Import Glossary",
         "import_invalid":       "The file is not a valid glossary.",
@@ -321,12 +328,18 @@ STRINGS = {
         "diff_warn_label":      "⚠ warnings",
         "diff_cached_label":    "from cache",
         "diff_summary":         "{total} strings | {warns} warnings | {cached} from cache",
+        "glookup_no_provider":  "Set up an AI provider in Settings before searching.",
+        "glookup_token_warn":   "This search will consume tokens from your API ({provider}). Continue?",
+        "glookup_searching":    "Asking the model...",
+        "glookup_unknown":      "The model could not find an official translation for '{term}'.",
+        "glookup_error":        "Search error: {err}",
+        "glookup_tooltip":      "Search official translation with AI",
         "cfg_cache":            "Translation cache",
         "cfg_cache_clear":      "🗑  Clear cache",
         "cfg_cache_cleared":    "Cache cleared successfully.",
         "cfg_cache_size":       "Cached entries: {n}",
         "cfg_about":            "About",
-        "cfg_about_text":       "WTS Translator v1.0.0\nDeveloped by Mateo Neufeld (SoyMante)\nAssistance: Claude (Anthropic)\ngithub.com/ItsMante/wts-translator",
+        "cfg_about_text":       "WTS Translator v1.3.5\nDeveloped by Mateo Neufeld (SoyMante)\nAssistance: Claude (Anthropic)\ngithub.com/ItsMante/wts-translator",
         "cfg_ollama_note":      "ℹ  Ollama requires no API Key — it runs locally on your PC.",
         "cfg_key_needed":       "⚠  This provider requires an API Key to work.",
     },
@@ -369,7 +382,6 @@ def get_glossary_path():
         # Copy the read-only bundled default to the writable AppData folder
         bundled = resource_path("glossary.json")
         if os.path.exists(bundled):
-            import shutil
             shutil.copy2(bundled, dest)
     return dest
 
@@ -416,6 +428,7 @@ class WTSTranslatorApp(ctk.CTk):
         self._api_key       = cfg.get("api_key", "")
         self._lang          = cfg.get("lang", self._lang)
         self._show_diff     = cfg.get("show_diff", True)
+
 
         self.available_models = (
             get_ollama_models() if self._provider == "ollama"
@@ -795,22 +808,45 @@ class WTSTranslatorApp(ctk.CTk):
         es_var  = tk.StringVar(value=es_text)
 
         row_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-        row_frame.grid(row=row_idx, column=0, columnspan=3, sticky="ew", padx=4, pady=2)
+        row_frame.grid(row=row_idx, column=0, columnspan=4, sticky="ew", padx=4, pady=2)
         row_frame.grid_columnconfigure(1, weight=1)
+
+        # Layout: [🔍] [EN entry................] [ES entry................] [✕]
+        # col 0 = lupa, col 1 = EN (fixed), col 2 = ES (expands), col 3 = delete
+        row_frame.grid_columnconfigure(1, weight=0)  # EN fixed width
+        row_frame.grid_columnconfigure(2, weight=1)  # ES expands
+
+        # Lookup button — LEFT of EN field
+        # Enabled only when the Spanish field is empty
+        wh_btn = ctk.CTkButton(
+            row_frame, text="🔍", width=28, height=28,
+            fg_color="transparent", border_width=1,
+            hover_color=("gray75", "gray30"),
+            command=lambda ev=en_var, sv=es_var, rf=row_frame: self._glossary_llm_lookup(ev, sv, rf))
+        wh_btn.grid(row=0, column=0, padx=(0, 4))
+
+        def _update_btn_state(*_):
+            state = "disabled" if es_var.get().strip() else "normal"
+            wh_btn.configure(state=state)
+
+        es_var.trace_add("write", _update_btn_state)
+        _update_btn_state()  # set initial state
 
         ctk.CTkEntry(row_frame, textvariable=en_var, width=210,
                      placeholder_text=self._("placeholder_en")).grid(
-            row=0, column=0, padx=(0, 6))
+            row=0, column=1, padx=(0, 6))
+
         ctk.CTkEntry(row_frame, textvariable=es_var,
                      placeholder_text=self._("placeholder_es")).grid(
-            row=0, column=1, sticky="ew", padx=(0, 6))
+            row=0, column=2, sticky="ew", padx=(0, 4))
+
         ctk.CTkButton(
             row_frame, text="✕", width=30, height=28,
             fg_color="transparent", border_width=1,
             hover_color=("gray75", "gray30"),
             command=lambda rf=row_frame, k=key, rv=(en_var, es_var):
                 self._delete_entry(rf, k, rv)
-        ).grid(row=0, column=2)
+        ).grid(row=0, column=3)
 
         self._gloss_data[key].append((en_var, es_var))
 
@@ -1015,10 +1051,10 @@ class WTSTranslatorApp(ctk.CTk):
         self._cfg_status.grid(row=7, column=0, sticky="w", padx=16, pady=(2, 4))
 
         # ── Language ─────────────────────────────────────────────────────────
-        self._cfg_lang_lbl, _ = section(scroll, 8, "cfg_language")
+        self._cfg_lang_lbl, _ = section(scroll, 14, "cfg_language")
 
         lang_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        lang_row.grid(row=10, column=0, sticky="w", padx=16, pady=4)
+        lang_row.grid(row=16, column=0, sticky="w", padx=16, pady=4)
 
         self._cfg_lang_es_btn = ctk.CTkButton(
             lang_row, text="🇦🇷  Español", width=140,
@@ -1031,10 +1067,10 @@ class WTSTranslatorApp(ctk.CTk):
         self._cfg_lang_en_btn.pack(side="left")
 
         # ── Theme ─────────────────────────────────────────────────────────────
-        self._cfg_theme_lbl, _ = section(scroll, 11, "cfg_theme")
+        self._cfg_theme_lbl, _ = section(scroll, 18, "cfg_theme")
 
         theme_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        theme_row.grid(row=13, column=0, sticky="w", padx=16, pady=4)
+        theme_row.grid(row=20, column=0, sticky="w", padx=16, pady=4)
 
         for theme, str_key in (("Dark", "cfg_theme_dark"),
                                ("Light", "cfg_theme_light"),
@@ -1045,10 +1081,10 @@ class WTSTranslatorApp(ctk.CTk):
             btn.pack(side="left", padx=(0, 8))
 
         # ── Cache ───────────────────────────────────────────────────
-        self._cfg_cache_lbl, _ = section(scroll, 14, "cfg_cache")
+        self._cfg_cache_lbl, _ = section(scroll, 8, "cfg_cache")
 
         cache_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        cache_row.grid(row=16, column=0, sticky="w", padx=16, pady=4)
+        cache_row.grid(row=10, column=0, sticky="w", padx=16, pady=4)
 
         self._cfg_cache_clear_btn = ctk.CTkButton(
             cache_row, text=self._("cfg_cache_clear"), width=160,
@@ -1062,23 +1098,24 @@ class WTSTranslatorApp(ctk.CTk):
         self._refresh_cache_size()
 
         # ── Preview ───────────────────────────────────────────────
-        self._cfg_diff_lbl, _ = section(scroll, 20, "cfg_diff")
+        self._cfg_diff_lbl, _ = section(scroll, 22, "cfg_diff")
 
-        self._cfg_diff_var = tk.BooleanVar(value=True)
+        self._cfg_diff_var = tk.BooleanVar(value=self._show_diff)
+        self._cfg_diff_var.trace_add("write", self._on_diff_toggle)
         self._cfg_diff_check = ctk.CTkCheckBox(
             scroll, text=self._("cfg_diff_toggle"),
             variable=self._cfg_diff_var)
-        self._cfg_diff_check.grid(row=22, column=0, sticky="w",
+        self._cfg_diff_check.grid(row=24, column=0, sticky="w",
                                    padx=16, pady=(4, 8))
 
         # ── About ───────────────────────────────────────────────────
-        self._cfg_about_lbl, _ = section(scroll, 23, "cfg_about")
+        self._cfg_about_lbl, _ = section(scroll, 26, "cfg_about")
 
         self._cfg_about_text = ctk.CTkLabel(
             scroll, text=self._("cfg_about_text"),
             justify="left", font=ctk.CTkFont(size=12),
             fg_color="transparent", wraplength=520)
-        self._cfg_about_text.grid(row=25, column=0, sticky="w", padx=16, pady=(4, 16))
+        self._cfg_about_text.grid(row=28, column=0, sticky="w", padx=16, pady=(4, 16))
 
     def _on_provider_change(self, label):
         for key, info in PROVIDERS.items():
@@ -1115,7 +1152,6 @@ class WTSTranslatorApp(ctk.CTk):
 
         def run():
             try:
-                from translator import _call_llm, _SINGLE_SYSTEM
                 result = _call_llm(
                     "Hello", _SINGLE_SYSTEM, model,
                     provider=provider, api_key=api_key or None)
@@ -1137,16 +1173,83 @@ class WTSTranslatorApp(ctk.CTk):
         cfg["api_key"]    = self._cfg_apikey_var.get().strip()
         cfg["model"]      = self.model_var.get().strip()
         cfg["lang"]       = self._lang
-        cfg["show_diff"]  = self._cfg_diff_var.get()
-        self._show_diff   = cfg["show_diff"]
+        cfg["show_diff"]       = self._cfg_diff_var.get()
+        self._show_diff        = cfg["show_diff"]
         save_config(cfg)
         self._api_key = cfg["api_key"]
         self._cfg_status.configure(
             text=self._("cfg_saved"), text_color="green")
 
+    def _on_diff_toggle(self, *_):
+        """Auto-save show_diff to config whenever the checkbox changes."""
+        self._show_diff = self._cfg_diff_var.get()
+        cfg = load_config()
+        cfg["show_diff"] = self._show_diff
+        save_config(cfg)
+
+    def _glossary_llm_lookup(self, en_var, es_var, anchor_widget):
+        """Ask the configured LLM for the official Warcraft localization of a term."""
+        term = en_var.get().strip()
+        if not term:
+            return
+
+        # Warn if using a paid API
+        if self._provider != "ollama":
+            provider_label = PROVIDERS[self._provider]["label"]
+            if not messagebox.askyesno(
+                self._("glookup_tooltip"),
+                self._("glookup_token_warn", provider=provider_label)):
+                return
+
+        anchor_widget.configure(cursor="watch")
+        self.update_idletasks()
+
+        provider  = self._provider
+        api_key   = self._api_key or None
+        model     = self.model_var.get().strip()
+
+        def run():
+            try:
+                system = (
+                    "You are a Warcraft localization expert. "
+                    "Your task is to provide the OFFICIAL Spanish Latin American "
+                    "localization of Warcraft terms (from WoW or Warcraft III). "
+                    "Reply with ONLY the official localized name, nothing else. "
+                    "If you are not sure of the official name, reply with UNKNOWN."
+                )
+                prompt = (
+                    f"What is the official Spanish Latin American localization "
+                    f"of the Warcraft term: {term}"
+                )
+                result = _call_llm(
+                    prompt, system, model,
+                    temperature=0.1,
+                    provider=provider,
+                    api_key=api_key
+                ).strip()
+                self.after(0, lambda: self._show_lookup_result(
+                    term, result, es_var, anchor_widget))
+            except Exception as e:
+                msg = self._("glookup_error", err=str(e)[:100])
+                self.after(0, lambda: (
+                    anchor_widget.configure(cursor=""),
+                    messagebox.showerror(self._("glookup_tooltip"), msg)
+                ))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show_lookup_result(self, term, result, es_var, anchor_widget):
+        anchor_widget.configure(cursor="")
+        if not result or result.upper() == "UNKNOWN":
+            messagebox.showinfo(
+                self._("glookup_tooltip"),
+                self._("glookup_unknown", term=term))
+            return
+        # Fill the Spanish field directly — user can edit or clear if needed
+        es_var.set(result)
+
     def _refresh_cache_size(self):
         try:
-            from translator import load_cache
             n = len(load_cache())
             self._cfg_cache_size_lbl.configure(
                 text=self._("cfg_cache_size", n=n))
@@ -1155,8 +1258,6 @@ class WTSTranslatorApp(ctk.CTk):
 
     def _clear_cache(self):
         try:
-            from translator import _get_cache_path
-            import os
             path = _get_cache_path()
             if os.path.exists(path):
                 os.remove(path)
@@ -1434,25 +1535,43 @@ class GlossaryImportDialog(ctk.CTkToplevel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  DIFF PREVIEW WINDOW
+#  DIFF PREVIEW WINDOW  (paginated — handles 1500+ strings without freezing)
 # ══════════════════════════════════════════════════════════════════════════════
 class DiffPreviewWindow(ctk.CTkToplevel):
-    """Modal window showing original vs translated strings before saving."""
+    """Modal window showing original vs translated strings before saving.
 
-    WARN_BG  = ("#fff3cd", "#4a3800")
-    CACHE_FG = ("#1a7a3a", "#5dba7d")
+    Renders strings in pages of PAGE_SIZE to avoid freezing on large files.
+    Users can edit translations inline, accept/reject per-string, and save.
+    """
+
+    PAGE_SIZE = 100          # strings per page
+    WARN_BG   = ("#fff3cd", "#4a3800")
+    CACHE_FG  = ("#1a7a3a", "#5dba7d")
 
     def __init__(self, parent, blocks, output_path):
         super().__init__(parent)
         self._parent      = parent
-        self._blocks      = blocks
         self._output_path = output_path
-        self._checks      = []
+        self._checks      = []   # (BooleanVar, block) for ALL rendered rows
 
         s = parent._
 
+        # Build the list of blocks that actually changed
+        self._changed_blocks = [
+            b for b in blocks
+            if not b.get("empty") and b.get("translated", b["text"]).strip() != b["text"].strip()
+        ]
+        # Ensure empty blocks still have translated set
+        for b in blocks:
+            if b.get("empty") and not b.get("translated"):
+                b["translated"] = b["text"]
+        self._all_blocks = blocks
+
+        self._page       = 0
+        self._total_pages = max(1, -(-len(self._changed_blocks) // self.PAGE_SIZE))  # ceil div
+
         self.title(s("diff_title"))
-        self.geometry("1000x620")
+        self.geometry("1020x660")
         self.minsize(800, 500)
         self.grab_set()
         self.focus_set()
@@ -1460,18 +1579,32 @@ class DiffPreviewWindow(ctk.CTkToplevel):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
-        # Toolbar
+        # ── Toolbar ───────────────────────────────────────────────────────────
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
 
-        ctk.CTkButton(bar, text=s("diff_btn_selall"), width=140,
-                      command=self._select_all).pack(side="left", padx=(0,6))
-        ctk.CTkButton(bar, text=s("diff_btn_selnone"), width=140,
-                      command=self._select_none).pack(side="left", padx=(0,6))
-        ctk.CTkButton(bar, text=s("diff_btn_selwarn"), width=160,
-                      command=self._select_warnings).pack(side="left", padx=(0,6))
+        ctk.CTkButton(bar, text=s("diff_btn_selall"), width=130,
+                      command=self._select_all).pack(side="left", padx=(0, 5))
+        ctk.CTkButton(bar, text=s("diff_btn_selnone"), width=130,
+                      command=self._select_none).pack(side="left", padx=(0, 5))
+        ctk.CTkButton(bar, text=s("diff_btn_selwarn"), width=150,
+                      command=self._select_warnings).pack(side="left", padx=(0, 5))
 
-        translatable = [b for b in blocks if not b.get("empty")]
+        # Page navigation
+        self._prev_btn = ctk.CTkButton(bar, text="◀", width=36,
+                                        command=self._prev_page)
+        self._prev_btn.pack(side="left", padx=(16, 4))
+
+        self._page_lbl = ctk.CTkLabel(bar, text="", width=80,
+                                       font=ctk.CTkFont(size=12))
+        self._page_lbl.pack(side="left")
+
+        self._next_btn = ctk.CTkButton(bar, text="▶", width=36,
+                                        command=self._next_page)
+        self._next_btn.pack(side="left", padx=(4, 0))
+
+        # Summary label
+        translatable = self._changed_blocks
         warns  = sum(1 for b in translatable if b.get("_warn"))
         cached = sum(1 for b in translatable if b.get("_cache_hit"))
         ctk.CTkLabel(bar,
@@ -1480,58 +1613,20 @@ class DiffPreviewWindow(ctk.CTkToplevel):
             text_color="gray", fg_color="transparent",
             font=ctk.CTkFont(size=12)).pack(side="right")
 
-        # Scrollable table
-        scroll = ctk.CTkScrollableFrame(self)
-        scroll.grid(row=1, column=0, sticky="nsew", padx=12, pady=4)
-        scroll.grid_columnconfigure(1, weight=1)
-        scroll.grid_columnconfigure(2, weight=2)
+        # ── Scrollable table ──────────────────────────────────────────────────
+        self._scroll = ctk.CTkScrollableFrame(self)
+        self._scroll.grid(row=1, column=0, sticky="nsew", padx=12, pady=4)
+        self._scroll.grid_columnconfigure(1, weight=1)
+        self._scroll.grid_columnconfigure(2, weight=2)
 
-        for col, key in [(0,"diff_col_id"),(1,"diff_col_orig"),(2,"diff_col_trans")]:
-            ctk.CTkLabel(scroll, text=s(key),
+        # Column headers — static, always visible
+        for col, key in [(0, "diff_col_id"), (1, "diff_col_orig"), (2, "diff_col_trans")]:
+            ctk.CTkLabel(self._scroll, text=s(key),
                          font=ctk.CTkFont(weight="bold"),
                          fg_color="transparent").grid(
-                row=0, column=col, sticky="w", padx=(6,4), pady=(0,6))
+                row=0, column=col, sticky="w", padx=(6, 4), pady=(0, 6))
 
-        row_idx = 1
-        for b in blocks:
-            if b.get("empty"):
-                if not b.get("translated"):
-                    b["translated"] = b["text"]
-                continue
-            orig = b["text"].strip()
-            trans = b.get("translated", orig).strip()
-            if orig == trans:
-                continue
-
-            is_warn   = b.get("_warn", False)
-            is_cached = b.get("_cache_hit", False)
-            row_bg    = self.WARN_BG if is_warn else "transparent"
-
-            var = tk.BooleanVar(value=True)
-            self._checks.append((var, b))
-
-            id_frame = ctk.CTkFrame(scroll, fg_color=row_bg)
-            id_frame.grid(row=row_idx, column=0, sticky="nsew", padx=(4,2), pady=1)
-            ctk.CTkCheckBox(id_frame, text=str(b["id"]),
-                            variable=var, width=60).pack(padx=4, pady=2)
-
-            ctk.CTkLabel(scroll, text=orig[:200],
-                         fg_color=row_bg, wraplength=340,
-                         justify="left", anchor="nw",
-                         font=ctk.CTkFont(size=11)).grid(
-                row=row_idx, column=1, sticky="nsew", padx=(2,4), pady=1)
-
-            trans_var = tk.StringVar(value=trans)
-            b["_trans_var"] = trans_var
-            ctk.CTkEntry(scroll, textvariable=trans_var,
-                         font=ctk.CTkFont(size=11,
-                             weight="bold" if is_warn else "normal"),
-                         text_color=self.CACHE_FG if is_cached else None).grid(
-                row=row_idx, column=2, sticky="ew", padx=(2,4), pady=1)
-
-            row_idx += 1
-
-        # Bottom buttons
+        # ── Bottom buttons ────────────────────────────────────────────────────
         bot = ctk.CTkFrame(self, fg_color="transparent")
         bot.grid(row=2, column=0, sticky="ew", padx=12, pady=(4, 10))
 
@@ -1544,9 +1639,90 @@ class DiffPreviewWindow(ctk.CTkToplevel):
                       width=120, height=36,
                       command=self.destroy).pack(side="left")
 
+        # Render first page
+        self._render_page(0)
+
+    # ── Pagination ────────────────────────────────────────────────────────────
+    def _render_page(self, page):
+        """Clear the scroll frame and render PAGE_SIZE rows for the given page."""
+        # Destroy existing row widgets (keep header row at index 0)
+        for widget in list(self._scroll.winfo_children()):
+            info = widget.grid_info()
+            if info and int(info.get("row", 0)) > 0:
+                widget.destroy()
+
+        self._page = page
+        start = page * self.PAGE_SIZE
+        end   = min(start + self.PAGE_SIZE, len(self._changed_blocks))
+        page_blocks = self._changed_blocks[start:end]
+
+        for row_offset, b in enumerate(page_blocks, start=1):
+            orig  = b["text"].strip()
+            trans = b.get("translated", orig).strip()
+
+            is_warn   = b.get("_warn", False)
+            is_cached = b.get("_cache_hit", False)
+            row_bg    = self.WARN_BG if is_warn else "transparent"
+
+            # Reuse existing check if already rendered (page revisit)
+            existing = next((var for var, blk in self._checks if blk is b), None)
+            if existing is None:
+                var = tk.BooleanVar(value=True)
+                self._checks.append((var, b))
+            else:
+                var = existing
+
+            id_frame = ctk.CTkFrame(self._scroll, fg_color=row_bg)
+            id_frame.grid(row=row_offset, column=0, sticky="nsew", padx=(4, 2), pady=1)
+            ctk.CTkCheckBox(id_frame, text=str(b["id"]),
+                            variable=var, width=60).pack(padx=4, pady=2)
+
+            ctk.CTkLabel(self._scroll, text=orig[:200],
+                         fg_color=row_bg, wraplength=320,
+                         justify="left", anchor="nw",
+                         font=ctk.CTkFont(size=11)).grid(
+                row=row_offset, column=1, sticky="nsew", padx=(2, 4), pady=1)
+
+            # Reuse existing StringVar if block was already rendered
+            if "_trans_var" not in b:
+                b["_trans_var"] = tk.StringVar(value=trans)
+
+            ctk.CTkEntry(self._scroll, textvariable=b["_trans_var"],
+                         font=ctk.CTkFont(size=11,
+                             weight="bold" if is_warn else "normal"),
+                         text_color=self.CACHE_FG if is_cached else None).grid(
+                row=row_offset, column=2, sticky="ew", padx=(2, 4), pady=1)
+
+        # Update nav controls
+        self._page_lbl.configure(text=f"{page + 1} / {self._total_pages}")
+        self._prev_btn.configure(state="normal" if page > 0 else "disabled")
+        self._next_btn.configure(
+            state="normal" if page < self._total_pages - 1 else "disabled")
+
+        # Scroll back to top when changing pages
+        try:
+            self._scroll._parent_canvas.yview_moveto(0)
+        except Exception:
+            pass
+
+    def _prev_page(self):
+        if self._page > 0:
+            self._render_page(self._page - 1)
+
+    def _next_page(self):
+        if self._page < self._total_pages - 1:
+            self._render_page(self._page + 1)
+
+    # ── Selection helpers ─────────────────────────────────────────────────────
     def _select_all(self):
-        for var, _ in self._checks:
-            var.set(True)
+        # Mark ALL blocks (not just current page)
+        for b in self._changed_blocks:
+            existing = next((v for v, blk in self._checks if blk is b), None)
+            if existing:
+                existing.set(True)
+            else:
+                var = tk.BooleanVar(value=True)
+                self._checks.append((var, b))
 
     def _select_none(self):
         for var, _ in self._checks:
@@ -1556,18 +1732,31 @@ class DiffPreviewWindow(ctk.CTkToplevel):
         for var, b in self._checks:
             var.set(bool(b.get("_warn")))
 
+    # ── Save ──────────────────────────────────────────────────────────────────
     def _save(self):
-        for var, b in self._checks:
-            if var.get():
-                edited = b.get("_trans_var")
-                if edited:
-                    b["translated"] = edited.get()
+        """Apply UI edits back to blocks, then write the file."""
+        # Build a fast lookup: block id → (var, block)
+        check_map = {id(b): (var, b) for var, b in self._checks}
+
+        for b in self._changed_blocks:
+            entry = check_map.get(id(b))
+            if entry:
+                var, _ = entry
+                if var.get():
+                    # User accepted — apply any inline edits
+                    trans_var = b.get("_trans_var")
+                    if trans_var:
+                        b["translated"] = trans_var.get()
+                else:
+                    # User rejected — revert to original
+                    b["translated"] = b["text"]
             else:
-                b["translated"] = b["text"]
-        save_wts_blocks(self._blocks, self._output_path)
+                # Block not yet rendered (beyond current pages seen) — keep translated
+                pass
+
+        save_wts_blocks(self._all_blocks, self._output_path)
         self.destroy()
         self._parent._on_done(self._output_path)
-
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":

@@ -5,7 +5,7 @@
 ; ============================================================================
 
 #define AppName      "WTS Translator"
-#define AppVersion   "1.0.0"
+#define AppVersion   "1.3.5"
 #define AppPublisher "SoyMante"
 #define AppURL       "https://github.com/ItsMante/wts-translator""
 #define AppExe       "WTS Translator.exe"
@@ -24,7 +24,7 @@ AllowNoIcons=yes
 LicenseFile=LICENSE.txt
 InfoAfterFile=CREDITS.txt
 OutputDir=.
-OutputBaseFilename=WTSTranslator_Setup_v1.0.0
+OutputBaseFilename=WTSTranslator_Setup_v1.3.5
 SetupIconFile={#AppIcon}
 Compression=lzma2/ultra64
 SolidCompression=yes

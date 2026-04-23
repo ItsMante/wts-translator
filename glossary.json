@@ -2,8 +2,8 @@
   "factions": {
     "Alliance": "Alianza",
     "Alliance of Lordaeron": "Alianza de Lordaeron",
-    "Scourge": "La Plaga",
-    "Undead Scourge": "La Plaga No-Muerta",
+    "Scourge": "la Plaga",
+    "Undead Scourge": "la Plaga No-Muerta",
     "Undead": "No-Muertos",
     "undead": "no-muertos",
     "Burning Legion": "Legión Ardiente",
@@ -14,10 +14,7 @@
     "Knights of the Ebon Blade": "Caballeros de la Espada de Ébano",
     "Knight of the Ebon Blade": "Caballero de la Espada de Ébano",
     "Watchers": "Vigilantes",
-    "Ashtongue": "Lengua de Ceniza",
-    "Forsaken": "Renegados",
-    "Scarlet Crusade": "Cruzada Escarlata",
-    "High Inquisitor": "Alto Inquisidor"
+    "Ashtongue": "Lengua de Ceniza"
   },
   "units": {
     "Footman": "Soldado raso",
@@ -34,19 +31,11 @@
     "Spearmen": "Lanceros",
     "Knights": "Caballeros",
     "Ghost": "Fantasma",
-    "Spell Breaker": "Rompehechizos",
-    "Worgen": "Huargen",
-    "banshee": "alma en pena",
-    "Banshee": "Alma en pena",
-    "Val'kyr": "Val'kyr",
-    "Shadowhall": "Consejo Sombrío"
+    "Spell Breaker": "Rompehechizos"
   },
   "abilities": {
     "Charge": "Carga",
-    "Defend": "Defender",
-    "Summon": "Invocar",
-    "Train": "Entrenar",
-    "Learn": "Aprender"
+    "Defend": "Defender"
   },
   "places": {
     "Dalaran": "Dalaran",
@@ -57,12 +46,7 @@
     "Violet Citadel": "Ciudadela Violeta",
     "Violet Hold": "Bastión Violeta",
     "Barracks": "Cuartel",
-    "Outland": "Terrallende",
-    "Northrend": "Rasganorte",
-    "Silverpine": "Argénteos",
-    "Hillsbrad Foothills": "Laderas de Trabalomas",
-    "Dragonblight": "Cementerio de Dragones",
-    "Icecrown": "Corona de Hielo"
+    "Outland": "Terrallende"
   },
   "titles_and_ranks": {
     "lord": "señor",
@@ -80,15 +64,7 @@
     "Warden": "Vigilante",
     "Lady": "Dama",
     "Dark Lady": "Dama Oscura",
-    "warden": "vigilante",
-    "Apothecary": "Boticario",
-    "Apothecarium": "Boticarion",
-    "Ranger": "General Forestal",
-    "Dark Ranger": "Forestal Oscura",
-    "Banshee Queen": "Reina alma en pena",
-    "Undertaker": "Enterrador",
-    "Lich King": "Rey Exánime",
-    "dreadlord": "señor del terror"
+    "warden": "vigilante"
   },
   "quest_keywords": {
     "MAIN QUEST FAILED": "MISIÓN PRINCIPAL FALLIDA",
@@ -126,15 +102,6 @@
     "Kirin Tor": "Kirin Tor",
     "Holy Light": "Luz Sagrada",
     "Shadowsong": "Cantosombrío",
-    "Anyndra": "Anyndra",
-    "Windrunner": "Brisaveloz",
-    "Whitemane": "Melenablanca",
-    "Goodchilde": "Bueninfante",
-    "Westwind": "Viento Oeste",
-    "Darkclaw": "Garra Oscura",
-    "Blood-Queen Lana'thel": "Reina de Sangre Lana'thel"
-  },
-  "Objetos": {
-    "Frostmourne": "Agonía de Escarcha"
+    "Anyndra": "Anyndra"
   }
 }
